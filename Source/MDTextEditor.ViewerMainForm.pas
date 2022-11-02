@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021 (Ethea S.r.l.)                                      }
+{       Copyright (c) 2021-2022 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -86,7 +86,7 @@ type
     FShowXMLText: Boolean;
     FMarkDownFile: TMarkDownFile;
     FHTMLViewer: THTMLViewer;
-    FSettings: TSettings;
+    FUseDarkStyle: Boolean;
     procedure ReadFromFile;
     procedure SaveToFile;
     function GetFileName: string;
@@ -100,7 +100,7 @@ type
     TabSheet: TTabSheet;
     Splitter: TSplitter;
     Constructor Create(const EditFileName : string;
-      const ASettings: TSettings);
+      const AUseDarkStyle: Boolean);
     Destructor Destroy; override;
     procedure ShowMarkDownAsHTML(const ASettings: TEditorSettings;
       const AReloadImages: Boolean);
@@ -191,6 +191,8 @@ type
     Chiudi1: TMenuItem;
     Chiuditutto1: TMenuItem;
     PopHTMLSep: TMenuItem;
+    ProcessorDialectLabel: TLabel;
+    ProcessorDialectComboBox: TComboBox;
     procedure WMGetMinMaxInfo(var Message: TWMGetMinMaxInfo); message WM_GETMINMAXINFO;
     procedure acOpenFileExecute(Sender: TObject);
     procedure acSaveExecute(Sender: TObject);
@@ -262,7 +264,9 @@ type
     procedure acEditCopyUpdate(Sender: TObject);
     procedure acSaveHTMLFileExecute(Sender: TObject);
     procedure acSavePDFFileExecute(Sender: TObject);
+    procedure ProcessorDialectComboBoxSelect(Sender: TObject);
   private
+    FirstAction: Boolean;
     MinFormWidth, MinFormHeight, MaxFormWidth, MaxFormHeight: Integer;
     FProcessingFiles: Boolean;
     FEditorSettings: TEditorSettings;
@@ -294,7 +298,7 @@ type
     procedure AdjustCompactWidth;
     function OpenFile(const FileName: string;
       const ARaiseError: Boolean = True): Boolean;
-    function AddEditingFile(EditingFile: TEditingFile): Integer;
+    function AddEditingFile(const EditingFile: TEditingFile): Integer;
     procedure RemoveEditingFile(EditingFile: TEditingFile);
     function CurrentEditFile: TEditingFile;
     function CurrentEditor: TSynEdit;
@@ -318,6 +322,7 @@ type
     function CanAcceptFileName(const AFileName: string): Boolean;
     function AcceptedExtensions: string;
     procedure SplitterMoved(Sender: TObject);
+    procedure WriteSettingsToIni;
     property MDFontSize: Integer read FMDFontSize write SetMDFontSize;
     property HTMLFontSize: Integer read FHTMLFontSize write SetHTMLFontSize;
   protected
@@ -351,6 +356,8 @@ uses
   , BegaPreview
   , SynPDF
   , vmHtmlToPdf
+  , MarkdownProcessor
+  , uLogExcept
   ;
 
 {$R *.dfm}
@@ -382,45 +389,47 @@ var
   LStream: TStringStream;
   LOldPos: Integer;
 begin
-    if AReloadImages then
-      HtmlViewer.clear;
-    FMarkDownFile := TMarkDownFile.Create(SynEditor.Lines.Text,
-      ASettings.ProcessorDialect, True);
-
-    //Load HTML content into HTML-Viewer
-    LOldPos := HtmlViewer.VScrollBarPosition;
-    HtmlViewer.DefFontSize := ASettings.HTMLFontSize;
-    HtmlViewer.DefFontName := ASettings.HTMLFontName;
-    LStream := TStringStream.Create(FMarkDownFile.HTML);
-    try
-      HtmlViewer.LoadFromStream(LStream);
-      HtmlViewer.VScrollBarPosition := LOldPos;
-      HtmlViewer.Visible := True;
-    finally
-      LStream.Free;
-    end;
-
+  if AReloadImages then
+    HtmlViewer.clear;
+  FMarkDownFile := TMarkDownFile.Create(SynEditor.Lines.Text,
+    ASettings.ProcessorDialect, True);
+  //Load HTML content into HTML-Viewer
+  LOldPos := HtmlViewer.VScrollBarPosition;
+  HtmlViewer.DefFontSize := ASettings.HTMLFontSize;
+  HtmlViewer.DefFontName := ASettings.HTMLFontName;
+  LStream := TStringStream.Create(FMarkDownFile.HTML);
+  try
+    HtmlViewer.LoadFromStream(LStream);
+    HtmlViewer.VScrollBarPosition := LOldPos;
+    HtmlViewer.Visible := True;
+  finally
+    LStream.Free;
+  end;
 end;
 
 procedure TEditingFile.ReadFromFile;
-var
-  LOutStream: TStringStream;
 begin
-  LOutStream := TStringStream.Create('', TEncoding.UTF8);
   try
-    SynEditor.Lines.LoadFromFile(FFileName, TEncoding.UTF8);
-  finally
-    LOutStream.Free;
+    //Try loading UTF-8 file
+    SynEditor.Lines.LoadFromFile(FileName, TEncoding.UTF8);
+  except
+    on E: EEncodingError do
+    begin
+      //Try to load ANSI file
+      SynEditor.Lines.LoadFromFile(FileName, TEncoding.ANSI);
+    end
+    else
+      raise;
   end;
 end;
 
 constructor TEditingFile.Create(const EditFileName: string;
-  const ASettings: TSettings);
+  const AUseDarkStyle: Boolean);
 var
   Filter : Word;
 begin
   inherited Create;
-  FSettings := ASettings;
+  FUseDarkStyle := AUseDarkStyle;
   FShowXMLText := False;
 
   if not IsStyleHookRegistered(TCustomSynEdit, TScrollingStyleHook) then
@@ -441,7 +450,7 @@ end;
 
 function TEditingFile.GetImageName: string;
 begin
-  if FSettings.UseDarkStyle then
+  if FUseDarkStyle then
     Result := 'markdown-white'
   else
     Result := 'markdown-black';
@@ -506,7 +515,7 @@ end;
 
 function TfrmMain.CanAcceptFileName(const AFileName: string): Boolean;
 begin
-  Result := pos(ExtractFileExt(AFileName), AcceptedExtensions) <> 0;
+  Result := pos(LowerCase(ExtractFileExt(AFileName)), AcceptedExtensions) <> 0;
 end;
 
 function TfrmMain.AcceptedExtensions: string;
@@ -520,6 +529,7 @@ function TfrmMain.OpenFile(const FileName : string;
 var
   EditingFile: TEditingFile;
   I, J: Integer;
+  LErrorMsg: string;
 begin
   Screen.Cursor := crHourGlass;
   Try
@@ -547,7 +557,7 @@ begin
       Try
         if not Assigned(EditingFile) then
         begin
-          EditingFile := TEditingFile.Create(FileName, FEditorSettings);
+          EditingFile := TEditingFile.Create(FileName, FEditorSettings.UseDarkStyle);
           //Add file to list
           I := AddEditingFile(EditingFile);
         end;
@@ -569,7 +579,11 @@ begin
     begin
       Result := False;
       if ARaiseError then
-        Raise EFilerError.CreateFmt(FILE_NOT_FOUND,[FileName]);
+      begin
+        LErrorMsg := Format(FILE_NOT_FOUND,[FileName]);
+        StatusBar.Panels[STATUSBAR_MESSAGE].Text := LErrorMsg;
+        Raise EFilerError.Create(LErrorMsg);
+      end;
     end;
   Finally
     FProcessingFiles := False;
@@ -840,12 +854,14 @@ var
   I: Integer;
   LFileName: string;
   LIndex: Integer;
+  LCurrentFileName: string;
 begin
   LIndex := -1;
   for I := 0 to FEditorSettings.OpenedFileList.Count-1 do
   begin
+    LCurrentFileName := FEditorSettings.CurrentFileName;
     LFileName := FEditorSettings.OpenedFileList.Strings[I];
-    if OpenFile(LFileName, False) and SameText(LFileName, FEditorSettings.CurrentFileName) then
+    if OpenFile(LFileName, False) and SameText(LFileName, LCurrentFileName) then
       LIndex := I;
   end;
   if LIndex <> -1 then
@@ -855,7 +871,6 @@ end;
 
 procedure TfrmMain.FormCreate(Sender: TObject);
 var
-  InitialDir : string;
   FileVersionStr: string;
 begin
   //Build opened-files list
@@ -890,23 +905,6 @@ begin
   //Initialize print output
   InitSynEditPrint;
 
-  //Load previous opened-files
-  LoadOpenedFiles;
-
-  //Initialize Open and Save Dialog with application path
-  if ParamStr(1) <> '' then
-  begin
-    //Load file passed at command line
-    InitialDir := ParamStr(1);
-    OpenFile(ParamStr(1));
-    UpdateMDViewer(True);
-  end
-  else
-    InitialDir := '.';
-
-  OpenDialog.InitialDir := InitialDir;
-  SaveDialog.InitialDir := InitialDir;
-
   //Update all editor options
   UpdateEditorsOptions;
 end;
@@ -920,7 +918,7 @@ begin
 
   //Create object to manage new file
   EditingFile := TEditingFile.Create(CurrentDir+'New.'+NewExt,
-    FEditorSettings);
+    FEditorSettings.UseDarkStyle);
   Try
     AddEditingFile(EditingFile);
     if EditingFile.SynEditor.CanFocus then
@@ -998,7 +996,7 @@ begin
   CloseSplitViewMenu;
 end;
 
-function TfrmMain.AddEditingFile(EditingFile: TEditingFile): Integer;
+function TfrmMain.AddEditingFile(const EditingFile: TEditingFile): Integer;
 var
   LTabSheet: TTabSheet;
   LEditor: TSynEdit;
@@ -1015,26 +1013,12 @@ begin
     LTabSheet := TTabSheet.Create(self);
     LTabSheet.PageControl := PageControl;
     //Use TAG of tabsheet to store the object pointer
-    LTabSheet.Tag := Integer(EditingFile);
+    LTabSheet.Tag := NativeInt(Pointer(EditingFile));
     LTabSheet.Caption := EditingFile.Name;
     LTabSheet.Imagename := EditingFile.ImageName+'-gray';
     LTabSheet.Parent := PageControl;
     LTabSheet.TabVisible := True;
     EditingFile.TabSheet := LTabSheet;
-
-    //Create the SynEdit object editor into the TabSheet that is the owner
-    LEditor := TSynEdit.Create(nil);
-    LEditor.OnChange := SynEditChange;
-    LEditor.OnEnter := SynEditEnter;
-    LEditor.MaxUndo := 5000;
-    LEditor.Align := alClient;
-    LEditor.Parent := LTabSheet;
-    LEditor.SearchEngine := SynEditSearch;
-    LEditor.PopupMenu := popEditor;
-    //Assign user preferences to the editor
-    FEditorOptions.AssignTo(LEditor);
-    LEditor.MaxScrollWidth := 3000;
-    EditingFile.SynEditor := LEditor;
 
     LFEViewer := THtmlViewer.Create(nil);
     LFEViewer.ScrollBars := ssNone;
@@ -1055,13 +1039,28 @@ begin
     LSplitter.Parent := LTabSheet;
     LSplitter.Beveled := True;
     LSplitter.OnMoved := SplitterMoved;
-    LSplitter.Tag := Integer(EditingFile);
+    LSplitter.Tag := NativeInt(EditingFile);
 
     EditingFile.Splitter := LSplitter;
     EditingFile.HTMLViewer := LFEViewer;
 
+    //Create the SynEdit object editor into the TabSheet that is the owner
+    LEditor := TSynEdit.Create(LTabSheet);
+    LEditor.OnChange := SynEditChange;
+    LEditor.OnEnter := SynEditEnter;
+    LEditor.MaxUndo := 5000;
+    LEditor.Align := alClient;
+    LEditor.Parent := LTabSheet;
+    LEditor.SearchEngine := SynEditSearch;
+    LEditor.PopupMenu := popEditor;
+
+    //Assign user preferences to the editor
+    FEditorOptions.AssignTo(LEditor);
+    LEditor.MaxScrollWidth := 3000;
+    EditingFile.SynEditor := LEditor;
     UpdateFromSettings(LEditor);
     UpdateHighlighter(LEditor);
+
     LEditor.Visible := True;
 
     //Show the tabsheet
@@ -1086,15 +1085,20 @@ begin
     Exit;
   if (CurrentEditor <> nil) then
   begin
-    if CurrentEditor.Modified then
-      pageControl.ActivePage.Imagename := CurrentEditFile.ImageName
-    else
-      pageControl.ActivePage.Imagename := CurrentEditFile.ImageName+'-gray';
+    Screen.Cursor := crHourGlass;
+    try
+      if CurrentEditor.Modified then
+        pageControl.ActivePage.Imagename := CurrentEditFile.ImageName
+      else
+        pageControl.ActivePage.Imagename := CurrentEditFile.ImageName+'-gray';
 
-    StatusBar.Panels[STATUSBAR_MESSAGE].Text := CurrentEditFile.FileName;
+      StatusBar.Panels[STATUSBAR_MESSAGE].Text := CurrentEditFile.FileName;
 
-    //Show HTML content of MarkDown
-    CurrentEditFile.ShowMarkDownAsHTML(FEditorSettings, AReloadImages);
+      //Show HTML content of MarkDown
+      CurrentEditFile.ShowMarkDownAsHTML(FEditorSettings, AReloadImages);
+    finally
+      Screen.Cursor := crDefault;
+    end;
   end;
 end;
 
@@ -1108,6 +1112,19 @@ begin
     FMDFile := CurrentEditFile;
   end;
   UpdateMDViewer(False);
+end;
+
+procedure TfrmMain.ProcessorDialectComboBoxSelect(Sender: TObject);
+var
+  LDialect: TMarkdownProcessorDialect;
+begin
+  LDialect := TMarkdownProcessorDialect(ProcessorDialectComboBox.ItemIndex);
+  if FEditorSettings.ProcessorDialect <> LDialect then
+  begin
+    FEditorSettings.ProcessorDialect := LDialect;
+    WriteSettingsToIni;
+    UpdateMDViewer(False);
+  end;
 end;
 
 procedure TfrmMain.acSaveUpdate(Sender: TObject);
@@ -1317,10 +1334,11 @@ begin
   if (CurrentEditor <> nil) and (Value >= MinfontSize) and (Value <= MaxfontSize) then
   begin
     if FMDFontSize <> 0 then
-      LScaleFactor := CurrentEditor.Font.Size / FMDFontSize
+      LScaleFactor := CurrentEditor.Font.Height / FMDFontSize
     else
       LScaleFactor := 1;
-    CurrentEditor.Font.Size := Round(Value * LScaleFactor);
+    CurrentEditor.Font.PixelsPerInch := Self.PixelsPerInch;
+    CurrentEditor.Font.Height := Round(Value * LScaleFactor * Self.ScaleFactor);
     FEditorSettings.MDFontSize := Value;
   end;
   FMDFontSize := Value;
@@ -1340,7 +1358,7 @@ var
   LStream: TStringStream;
 begin
   SaveDialog.FileName := ChangeFileExt(CurrentEditFile.FileName, '.htm');
-  SaveDialog.Filter := 'Fattura Elettronica in HTML (*.htm)|*.htm';
+  SaveDialog.Filter := 'MarkDown file in HTML (*.htm)|*.htm';
   if SaveDialog.Execute then
   begin
     LStream := TStringStream.Create(CurrentEditFile.HTMLViewer.Text,
@@ -1357,7 +1375,7 @@ end;
 procedure TfrmMain.acSavePDFFileExecute(Sender: TObject);
 begin
   SaveDialog.FileName := ChangeFileExt(CurrentEditFile.FileName, '.pdf');
-  SaveDialog.Filter := 'Fattura Elettronica in PDF (*.pdf)|*.pdf';
+  SaveDialog.Filter := 'Markdown file in PDF (*.pdf)|*.pdf';
   if SaveDialog.Execute then
   begin
     Screen.Cursor := crHourGlass;
@@ -1380,7 +1398,7 @@ begin
       LScaleFactor := CurrentEditFile.HTMLViewer.DefFontSize / FMDFontSize
     else
       LScaleFactor := 1;
-    CurrentEditFile.HTMLViewer.DefFontSize := Round(Value * LScaleFactor);
+    CurrentEditFile.HTMLViewer.DefFontSize := Round(Value * LScaleFactor * Self.ScaleFactor);
     FEditorSettings.HTMLFontSize := Value;
   end;
   FHTMLFontSize := Value;
@@ -1433,13 +1451,16 @@ end;
 procedure TfrmMain.UpdateFromSettings(AEditor: TSynEdit);
 begin
   UpdateApplicationStyle(FEditorSettings.StyleName);
-  if (AEditor <> nil) then
+  if AEditor <> nil then
   begin
-    FEditorSettings.ReadSettings(AEditor.Highlighter, self.FEditorOptions);
+  FEditorSettings.ReadSettings(AEditor.Highlighter, self.FEditorOptions);
     AEditor.ReadOnly := False;
   end
   else
     FEditorSettings.ReadSettings(nil, self.FEditorOptions);
+
+  ProcessorDialectComboBox.ItemIndex := ord(FEditorSettings.ProcessorDialect);
+
   if FEditorSettings.MDFontSize >= MinfontSize then
     MDFontSize := FEditorSettings.MDFontSize
   else
@@ -1512,7 +1533,7 @@ end;
 procedure TfrmMain.actnSaveAsExecute(Sender: TObject);
 begin
   SaveDialog.FileName := ChangeFileExt(CurrentEditFile.FileName, '.md');
-  SaveDialog.Filter := 'Maerkdown text file (*.md)';
+  SaveDialog.Filter := 'Markdown Text file (*.md)';
 
   SaveDialog.FileName := CurrentEditFile.FileName;
   if SaveDialog.Execute then
@@ -1631,8 +1652,33 @@ end;
 
 procedure TfrmMain.ActionListUpdate(Action: TBasicAction;
   var Handled: Boolean);
+var
+  InitialDir : string;
+  LFileName: string;
 begin
   UpdateStatusBarPanels;
+  if not FirstAction then
+  begin
+    FirstAction := True;
+    //Initialize Open and Save Dialog with application path
+    LFileName := ParamStr(1);
+    if LFileName <> '' then
+    begin
+      TLogPreview.Add(Format('ParamStr(1): %s', [LFileName]));
+      //Load file passed at command line
+      InitialDir := ExtractFilePath(LFileName);
+      OpenFile(LFileName);
+      UpdateMDViewer(True);
+    end
+    else
+      InitialDir := '.';
+
+    OpenDialog.InitialDir := InitialDir;
+    SaveDialog.InitialDir := InitialDir;
+
+    //Load previous opened-files
+    LoadOpenedFiles;
+  end;
 end;
 
 procedure TfrmMain.actMenuExecute(Sender: TObject);
@@ -1643,16 +1689,21 @@ begin
     SV.Open;
 end;
 
+procedure TfrmMain.WriteSettingsToIni;
+begin
+  if CurrentEditor <> nil then
+    FEditorSettings.WriteSettings(CurrentEditor.Highlighter, FEditorOptions)
+  else
+    FEditorSettings.WriteSettings(nil, FEditorOptions);
+end;
+
 procedure TfrmMain.actnColorSettingsExecute(Sender: TObject);
 begin
   if ShowSettings(DialogPosRect,
     Title_MDViewer,
     CurrentEditor, FEditorSettings, True) then
   begin
-    if CurrentEditor <> nil then
-      FEditorSettings.WriteSettings(CurrentEditor.Highlighter, FEditorOptions)
-    else
-      FEditorSettings.WriteSettings(nil, FEditorOptions);
+    WriteSettingsToIni;
     UpdateFromSettings(CurrentEditor);
     UpdateMDViewer(True);
     UpdateHighlighters;
@@ -1692,6 +1743,8 @@ begin
     SV.CompactWidth := Round(44 * ScaleFactor)
   else
     SV.CompactWidth := Round(66 * ScaleFactor);
+  if (CurrentEditFile <> nil) and (CurrentEditFile.HTMLViewer <> nil) and (CurrentEditFile.HTMLViewer.Width > CurrentEditFile.TabSheet.Width) then
+    CurrentEditFile.HTMLViewer.Width := width div 3;
 end;
 
 procedure TfrmMain.FormAfterMonitorDpiChanged(Sender: TObject; OldDPI,

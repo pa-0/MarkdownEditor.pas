@@ -1,29 +1,23 @@
 unit Img32.Fmt.GIF;
-
 (*******************************************************************************
 * Author    :  Angus Johnson                                                   *
-* Version   :  3.1                                                             *
-* Date      :  15 August 2021                                                    *
+* Version   :  4.3                                                             *
+* Date      :  27 September 2022                                               *
 * Website   :  http://www.angusj.com                                           *
-* Copyright :  Angus Johnson 2019-2021                                         *
+* Copyright :  Angus Johnson 2019-2022                                         *
 * Purpose   :  GIF file format extension for TImage32                          *
 * License   :  http://www.boost.org/LICENSE_1_0.txt                            *
 *******************************************************************************)
-
 interface
-
 {$I Img32.inc}
-
 {$IF COMPILERVERSION = 15}
 implementation
 {$ELSE}
-
 uses
-  SysUtils, Classes, Windows, Math, Img32, Graphics,
+  SysUtils, Classes, Windows, Math, Img32,
+  {$IFDEF USES_NAMESPACES} Vcl.Graphics, {$ELSE}Graphics, {$ENDIF}
   {$IFDEF DELPHI_GIF} GifImg {$ELSE} GifImage {$ENDIF};
-
 type
-
   TImageFormat_GIF = class(TImageFormat)
   public
     class function IsValidImageStream(stream: TStream): Boolean; override;
@@ -33,13 +27,10 @@ type
     class function CanPasteFromClipboard: Boolean; override;
     class function PasteFromClipboard(img32: TImage32): Boolean; override;
   end;
-
 implementation
-
 //------------------------------------------------------------------------------
 // Loading (reading) GIF images from file ...
 //------------------------------------------------------------------------------
-
 class function TImageFormat_GIF.IsValidImageStream(stream: TStream): Boolean;
 var
   savedPos: integer;
@@ -53,7 +44,6 @@ begin
   result := flag = $38464947;
 end;
 //------------------------------------------------------------------------------
-
 function TImageFormat_GIF.LoadFromStream(stream: TStream; img32: TImage32): Boolean;
 var
   gif: TGIFImage;
@@ -104,54 +94,53 @@ begin
     bmpT.Free;
   end;
 end;
-
 //------------------------------------------------------------------------------
 // Saving (writing) gif images to file ...
 //------------------------------------------------------------------------------
-
 procedure TImageFormat_GIF.SaveToStream(stream: TStream; img32: TImage32);
 var
   gif: TGIFImage;
+  bmp: TBitmap;
 begin
+  bmp := TBitmap.Create;
   gif := TGIFImage.Create;
   try
-    gif.Bitmap.Width := img32.Width;
-    gif.Bitmap.Height := img32.Height;
-    img32.CopyToDc(gif.Bitmap.Canvas.Handle,0,0, false);
+    //copy to the new TBitmap
+    bmp.PixelFormat := pf32bit;
+    bmp.SetSize(img32.Width, img32.Height);
+    bmp.AlphaFormat := afDefined;
+    SetBitmapBits(bmp.Handle,
+      img32.Width * img32.Height * 4, img32.PixelBase);
+    //next copy from the bitmap to the new TGifImage
+    gif.Add(bmp);
+    //and now save
     gif.SaveToStream(stream);
   finally
     gif.Free;
+    bmp.Free;
   end;
 end;
 //------------------------------------------------------------------------------
-
 class function TImageFormat_GIF.CopyToClipboard(img32: TImage32): Boolean;
 begin
   result := false; //not implemented
 end;
 //------------------------------------------------------------------------------
-
 class function TImageFormat_GIF.CanPasteFromClipboard: Boolean;
 begin
   result := false;
 end;
 //------------------------------------------------------------------------------
-
 class function TImageFormat_GIF.PasteFromClipboard(img32: TImage32): Boolean;
 begin
   result := false; //not implemented
 end;
-
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
-
 initialization
   TImage32.RegisterImageFormatClass('GIF', TImageFormat_GIF, cpLow);
   
 {$IFEND}
 end.
-
-
-
 
 

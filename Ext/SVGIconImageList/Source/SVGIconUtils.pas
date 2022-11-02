@@ -3,7 +3,7 @@
 {       Icon SVG ImageList: An extended ImageList for Delphi/VCL               }
 {       to simplify use of SVG Icons (resize, opacity and more...)             }
 {                                                                              }
-{       Copyright (c) 2019-2021 (Ethea S.r.l.)                                 }
+{       Copyright (c) 2019-2022 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {       Contributors: Vincent Parrett, Kiriakos Vlahos                         }
 {                                                                              }
@@ -47,6 +47,16 @@ uses
   , Vcl.Imaging.pngimage
   , ComCtrls;
 
+Type
+  TPngExportSize = (es16, es32, es48, es64, es96, es128, es192, es256, esCustom);
+  TPngExportSizes = Set of TPngExportSize;
+
+  TExportToPngEvent = procedure (const ASizes: TPngExportSizes; const SVGText: string;
+    const AFolder, AFormat: string; ACustomSize: Integer) of Object;
+
+const
+  AllPngExportSizes = [es16, es32, es48, es64, es96, es128, es192, es256, esCustom];
+
 function UpdateSVGIconListView(const AListView: TListView;
   const ACategory: string = '';
   const AIncludeIndex: Boolean = True): Integer;
@@ -55,9 +65,6 @@ function UpdateSVGIconListViewCaptions(const AListView: TListView;
 procedure SVGExportToPng(const AWidth, AHeight: Integer;
   FSVG: ISVG; const AOutFolder: string;
   const AFileName: string = '');
-{$IFDEF IgnoreAntiAliasedColor}
-procedure MakeTransparent(DC: THandle);
-{$ENDIF}
 function PNG4TransparentBitMap(aBitmap: TBitmap): TPNGImage;
 
 implementation
@@ -66,11 +73,7 @@ uses
   System.SysUtils
   , System.Types
   , Vcl.Themes
-  , SVGIconImageCOllection
-  {$IFDEF IgnoreAntiAliasedColor}
-  , Winapi.GDIPAPI
-  , Winapi.GDIPOBJ
-  {$ENDIF}
+  , SVGIconImageCollection
   {$IFDEF D10_3}
   , VirtualImageList
   {$ENDIF}
@@ -121,20 +124,6 @@ begin
   end;
 end;
 
-{$IFDEF IgnoreAntiAliasedColor}
-procedure MakeTransparent(DC: THandle);
-var
-  Graphics: TGPGraphics;
-begin
-  Graphics := TGPGraphics.Create(DC);
-  try
-    Graphics.Clear(aclTransparent);
-  finally
-    Graphics.Free;
-  end;
-end;
-{$ENDIF}
-
 procedure SVGExportToPng(const AWidth, AHeight: Integer;
   FSVG: ISVG; const AOutFolder: string;
   const AFileName: string = '');
@@ -147,11 +136,15 @@ begin
   LImagePng := nil;
   try
     LBitmap := TBitmap.Create;
-    LBitmap.PixelFormat := pf32bit;
+    LBitmap.PixelFormat := TPixelFormat.pf32bit;   // 32bit bitmap
+    LBitmap.AlphaFormat := TAlphaFormat.afDefined; // Enable alpha channel
+
     LBitmap.SetSize(AWidth, AHeight);
-    {$IFDEF IgnoreAntiAliasedColor}
-    MakeTransparent(LBitmap.Canvas.Handle);
-    {$ENDIF}
+
+    // Fill background with transparent
+    LBitmap.Canvas.Brush.Color := clNone;
+    LBitmap.Canvas.FillRect(Rect(0, 0, AWidth, AHeight));
+
     FSVG.PaintTo(LBitmap.Canvas.Handle, TRectF.Create(0, 0, AWidth, AHeight));
 
     LImagePng := PNG4TransparentBitMap(LBitmap);

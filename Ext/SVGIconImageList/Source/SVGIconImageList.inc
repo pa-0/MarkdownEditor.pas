@@ -4,9 +4,6 @@
   {$DEFINE DXE+}
   {$DEFINE DXE2+}
   {$DEFINE DXE3+}
-  {$DEFINE DXE4+}
-  {$DEFINE DXE5+}
-  {$DEFINE DXE6+}
 {$ENDIF}
 
 // Delphi XE6
@@ -125,7 +122,7 @@
   {$DEFINE D10_4+}
 {$ENDIF}
 
-// Delphi 11.0 Olympus
+// Delphi 11 Alexandria
 {$IFDEF VER350}
   {$DEFINE D2010+}
   {$DEFINE DXE+}
@@ -141,7 +138,7 @@
   {$DEFINE D10_2+}
   {$DEFINE D10_3+}
   {$DEFINE D10_4+}
-  {$DEFINE D11_0+}
+  {$DEFINE D11+}
 {$ENDIF}
 
 {$IFDEF D10_3+}
@@ -164,6 +161,8 @@
 {.$DEFINE Delphi_SVGEngine}
 //or use Delphi Engine from Image32 library by Angus Johnson (included into Image32 folder)
 {$DEFINE Image32_SVGEngine}
+//or use Engine Skia with skia4delphi wrapper by Vinícius Felipe Botelho Barbosa (included into skia4delphi folder)
+{.$DEFINE Skia_SVGEngine}
 //or use Engine Cairo wrapper (included by Lübbe Onken in Cairo folder)
 {.$DEFINE Cairo_SVGEngine}
 

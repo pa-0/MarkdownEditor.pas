@@ -11,14 +11,12 @@ object FrmAbout: TFrmAbout
   Font.Height = -11
   Font.Name = 'Tahoma'
   Font.Style = []
-  OldCreateOrder = False
   Position = poDefault
   OnClose = FormClose
   OnCreate = FormCreate
   DesignSize = (
     446
     316)
-  PixelsPerInch = 96
   TextHeight = 13
   object TitleLabel: TLabel
     Left = 190
@@ -30,10 +28,11 @@ object FrmAbout: TFrmAbout
     WordWrap = True
   end
   object LabelVersion: TLabel
-    Left = 316
+    Left = 327
     Top = 64
-    Width = 35
+    Width = 108
     Height = 13
+    Alignment = taRightJustify
     Caption = 'Version'
   end
   object SVGIconImage1: TSVGIconImage
@@ -188,12 +187,14 @@ object FrmAbout: TFrmAbout
     Color = clWindow
     ParentBackground = False
     TabOrder = 0
+    ExplicitTop = 264
+    ExplicitWidth = 442
     object btnOK: TButton
       Left = 360
       Top = 16
       Width = 75
       Height = 25
-      Caption = 'OK'
+      Caption = 'CLOSE'
       Default = True
       TabOrder = 2
       OnClick = btnOKClick
@@ -231,7 +232,7 @@ object FrmAbout: TFrmAbout
       'Author:'
       'Carlo Barazzetta'
       'https://github.com/EtheaDev/MarkdownShellExtensions'
-      'Copyright '#169' 2021 all rights reserved.'
+      'Copyright '#169' 2021-2022 all rights reserved.'
       ''
       'Other libraries from Ethea:'
       'SVGIconImageList'
@@ -251,7 +252,7 @@ object FrmAbout: TFrmAbout
       'https://github.com/RRUZ/delphi-preview-handler'
       'The Initial Developer of the Original Code is Rodrigo Ruz V.'
       
-        'Portions created by Rodrigo Ruz V. are Copyright '#169' 2011-2021 Rod' +
+        'Portions created by Rodrigo Ruz V. are Copyright '#169' 2011-2022 Rod' +
         'rigo Ruz V.'
       ''
       'SynEdit http://synedit.svn.sourceforge.net/viewvc/synedit/'
@@ -271,7 +272,7 @@ object FrmAbout: TFrmAbout
       
         '- Image32 Library - http://www.angusj.com/delphi/image32/Docs/_B' +
         'ody.htm'
-      'Copyright '#169'2019-2021 Angus Johnson.'
+      'Copyright '#169'2019-2022 Angus Johnson.'
       ''
       'HTMLViewer - https://github.com/BerndGabriel/HtmlViewer'
       'Copyright (c) 1995 - 2008 by L. David Baldwin'
@@ -283,11 +284,12 @@ object FrmAbout: TFrmAbout
     ReadOnly = True
     ScrollBars = ssVertical
     TabOrder = 1
+    ExplicitHeight = 171
   end
   object LinkLabel1: TLinkLabel
     Left = 8
     Top = 62
-    Width = 303
+    Width = 313
     Height = 19
     Caption = 
       '<a href="https://github.com/EtheaDev/MarkdownShellExtensions">ht' +

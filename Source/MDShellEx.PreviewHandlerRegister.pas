@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021 (Ethea S.r.l.)                                      }
+{       Copyright (c) 2021-2022 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -22,6 +22,8 @@
 {  See the License for the specific language governing permissions and         }
 {  limitations under the License.                                              }
 {                                                                              }
+{  The Original Code is:                                                       }
+{  Delphi Preview Handler  https://github.com/RRUZ/delphi-preview-handler      }
 {                                                                              }
 {  The Initial Developer of the Original Code is Rodrigo Ruz V.                }
 {  Portions created by Rodrigo Ruz V. are Copyright 2011-2021 Rodrigo Ruz V.   }
@@ -41,7 +43,7 @@ type
   TPreviewHandlerRegister = class(TComObjectFactory)
   private
     FPreviewHandlerClass: TPreviewHandlerClass;
-    class procedure DeleteRegValue(const Key, ValueName: string; RootKey: DWord);
+    class procedure DeleteRegValue(const Key, ValueName: string; RootKey: HKEY);
   protected
   public
     constructor Create(APreviewHandlerClass: TPreviewHandlerClass;
@@ -76,7 +78,7 @@ begin
   TComPreviewHandler(result).PreviewHandlerClass := PreviewHandlerClass;
 end;
 
-class procedure TPreviewHandlerRegister.DeleteRegValue(const Key, ValueName: string; RootKey: DWord);
+class procedure TPreviewHandlerRegister.DeleteRegValue(const Key, ValueName: string; RootKey: HKEY);
 var
   RegKey: HKEY;
 begin

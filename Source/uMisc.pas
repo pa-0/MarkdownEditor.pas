@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021 (Ethea S.r.l.)                                      }
+{       Copyright (c) 2021-2022 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -64,7 +64,7 @@ uses
 procedure Initialize_GDI; stdcall;
 begin
   //Initialize GDI+
-  TLogPreview.Add('Initialize GDI+');
+  TLogPreview.Add('GDI+: Initialize');
   StartupInput.DebugEventCallback := nil;
   StartupInput.SuppressBackgroundThread := False;
   StartupInput.SuppressExternalCodecs := False;
@@ -74,6 +74,7 @@ end;
 
 procedure Finalize_GDI; stdcall;
 begin
+  TLogPreview.Add('GDI+: Finalize');
   GdiplusShutdown(gdiplusToken);
 end;
 
@@ -115,8 +116,6 @@ begin
     StrDispose(lpszPath);
   end;
 end;
-
-
 
 function GetFileVersion(const FileName: string): string;
 var

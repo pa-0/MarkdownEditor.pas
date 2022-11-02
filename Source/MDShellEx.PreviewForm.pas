@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021 (Ethea S.r.l.)                                      }
+{       Copyright (c) 2021-2022 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -43,11 +43,11 @@ uses
   MDShellEx.Settings, System.ImageList, SynEditCodeFolding,
   SVGIconImageList, SVGIconImageListBase, SVGIconImage, Vcl.VirtualImageList,
   Vcl.OleCtrls, SHDocVw,
-  MDShellEx.Resources, HTMLUn2, HtmlView
-  ;
+  MDShellEx.Resources, HTMLUn2, HtmlView,
+  UPreviewContainer;
 
 type
-  TFrmPreview = class(TForm)
+  TFrmPreview = class(TPreviewContainer)
     SynEdit: TSynEdit;
     PanelTop: TPanel;
     PanelMD: TPanel;
@@ -62,6 +62,9 @@ type
     Splitter: TSplitter;
     ToolBarAllegati: TToolBar;
     HtmlViewer: THtmlViewer;
+    paTop: TPanel;
+    ProcessorDialectLabel: TLabel;
+    ProcessorDialectComboBox: TComboBox;
     procedure FormCreate(Sender: TObject);
     procedure ToolButtonZoomInClick(Sender: TObject);
     procedure ToolButtonZoomOutClick(Sender: TObject);
@@ -76,6 +79,7 @@ type
     procedure SplitterMoved(Sender: TObject);
     procedure FormAfterMonitorDpiChanged(Sender: TObject; OldDPI,
       NewDPI: Integer);
+    procedure ProcessorDialectComboBoxSelect(Sender: TObject);
   private
     FMDFontSize: Integer;
     FHTMLFontSize: Integer;
@@ -136,10 +140,12 @@ uses
   , GraphUtil
   , MDShellEx.About
   , MDShellEx.SettingsForm
+  , MarkdownProcessor
   ;
 
 {$R *.dfm}
-  { TFrmEditor }
+
+  { TFrmPreview }
 
 procedure TFrmPreview.AppException(Sender: TObject; E: Exception);
 begin
@@ -167,10 +173,7 @@ end;
 
 function TFrmPreview.DialogPosRect: TRect;
 begin
-  if Self.Parent <> nil then
-    GetWindowRect(Self.Parent.ParentWindow, Result)
-  else
-    Result := TRect.Create(0,0,0,0);
+  Result := ClientToScreen(ActualRect);
 end;
 
 procedure TFrmPreview.UpdateGUI;
@@ -226,10 +229,16 @@ begin
 end;
 
 procedure TFrmPreview.FormCreate(Sender: TObject);
+var
+  FileVersionStr: string;
 begin
+  inherited;
   TLogPreview.Add('TFrmEditor.FormCreate');
+  FileVersionStr := uMisc.GetFileVersion(GetModuleLocation());
+  FSimpleText := Format(StatusBar.SimpleText,
+    [FileVersionStr, {$IFDEF WIN32}32{$ELSE}64{$ENDIF}]);
+  StatusBar.SimpleText := FSimpleText;
   Application.OnException := AppException;
-  FSimpleText := StatusBar.SimpleText;
   UpdateFromSettings(False);
   HTMLViewer.OnHotSpotClick := dmResources.HtmlViewerHotSpotClick;
   HTMLViewer.OnImageRequest:= dmResources.HtmlViewerImageRequest;
@@ -282,11 +291,25 @@ begin
   LStringStream := TStringStream.Create('',TEncoding.UTF8);
   try
     SynEdit.Lines.LoadFromStream(AStream, TEncoding.UTF8);
+    HtmlViewer.ServerRoot := ExtractFilePath(GetModuleLocation);
     ShowMarkDownAsHTML(FPreviewSettings, True);
   finally
     LStringStream.Free;
   end;
   TLogPreview.Add('TFrmEditor.LoadFromStream Done');
+end;
+
+procedure TFrmPreview.ProcessorDialectComboBoxSelect(Sender: TObject);
+var
+  LDialect: TMarkdownProcessorDialect;
+begin
+  LDialect := TMarkdownProcessorDialect(ProcessorDialectComboBox.ItemIndex);
+  if FPreviewSettings.ProcessorDialect <> LDialect then
+  begin
+    FPreviewSettings.ProcessorDialect := LDialect;
+    FPreviewSettings.WriteSettings(SynEdit.Highlighter, nil);
+    ShowMarkDownAsHTML(FPreviewSettings, False);
+  end;
 end;
 
 procedure TFrmPreview.SaveSettings;
@@ -421,6 +444,9 @@ begin
     MDFontSize := FPreviewSettings.MDFontSize
   else
     MDFontSize := MinfontSize;
+
+  ProcessorDialectComboBox.ItemIndex := ord(FPreviewSettings.ProcessorDialect);
+
   SynEdit.Font.Name := FPreviewSettings.MDFontName;
 
   if FPreviewSettings.HTMLFontSize >= MinfontSize then

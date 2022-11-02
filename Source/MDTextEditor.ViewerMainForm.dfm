@@ -2,8 +2,8 @@ object frmMain: TfrmMain
   Left = 250
   Top = 217
   Caption = 'MarkDown Text Editor'
-  ClientHeight = 590
-  ClientWidth = 944
+  ClientHeight = 589
+  ClientWidth = 940
   Color = clWindow
   Ctl3D = False
   Font.Charset = DEFAULT_CHARSET
@@ -21,33 +21,36 @@ object frmMain: TfrmMain
   OnMouseWheelDown = FormMouseWheelDown
   OnMouseWheelUp = FormMouseWheelUp
   OnResize = FormResize
-  PixelsPerInch = 96
   DesignSize = (
-    944
-    590)
+    940
+    589)
   TextHeight = 15
   object ClientPanel: TPanel
     Left = 44
     Top = 36
-    Width = 900
-    Height = 535
+    Width = 896
+    Height = 534
     Align = alClient
     TabOrder = 4
+    ExplicitWidth = 892
+    ExplicitHeight = 533
     object PageControl: TPageControl
       Left = 1
       Top = 1
-      Width = 898
-      Height = 533
+      Width = 894
+      Height = 532
       Align = alClient
       Images = VirtualImageList
       TabOrder = 0
       OnChange = PageControlChange
+      ExplicitWidth = 890
+      ExplicitHeight = 531
     end
   end
   object StatusBar: TStatusBar
     Left = 0
-    Top = 571
-    Width = 944
+    Top = 570
+    Width = 940
     Height = 19
     Panels = <
       item
@@ -71,12 +74,14 @@ object frmMain: TfrmMain
       item
         Width = 80
       end>
+    ExplicitTop = 569
+    ExplicitWidth = 936
   end
   object SV: TSplitView
     Left = 0
     Top = 36
     Width = 160
-    Height = 535
+    Height = 531
     CloseStyle = svcCompact
     Color = clHighlight
     CompactWidth = 44
@@ -89,11 +94,12 @@ object frmMain: TfrmMain
     OnClosing = SVClosing
     OnOpened = SVOpened
     OnOpening = SVOpening
+    ExplicitHeight = 530
     object catMenuItems: TCategoryButtons
       Left = 0
       Top = 0
       Width = 160
-      Height = 535
+      Height = 531
       Align = alClient
       BackgroundGradientDirection = gdVertical
       BorderStyle = bsNone
@@ -191,30 +197,47 @@ object frmMain: TfrmMain
       OnGetHint = catMenuItemsGetHint
       OnMouseLeave = catMenuItemsMouseLeave
       OnMouseMove = catMenuItemsMouseMove
+      ExplicitHeight = 530
     end
   end
   object panlTop: TPanel
     Left = 0
     Top = 0
-    Width = 944
+    Width = 940
     Height = 36
     Align = alTop
     BevelOuter = bvNone
     ParentBackground = False
     TabOrder = 1
+    ExplicitWidth = 936
+    DesignSize = (
+      940
+      36)
     object lblTitle: TLabel
       AlignWithMargins = True
       Left = 40
       Top = 3
       Width = 116
-      Height = 15
+      Height = 30
       Align = alLeft
       Caption = 'MarkDown Text Editor'
       Layout = tlCenter
+      ExplicitHeight = 15
+    end
+    object ProcessorDialectLabel: TLabel
+      Left = 483
+      Top = 11
+      Width = 55
+      Height = 15
+      Alignment = taRightJustify
+      Anchors = [akTop, akRight]
+      AutoSize = False
+      Caption = 'Dialect:'
+      ExplicitLeft = 491
     end
     object SettingsToolBar: TToolBar
       AlignWithMargins = True
-      Left = 741
+      Left = 737
       Top = 3
       Width = 200
       Height = 30
@@ -230,6 +253,7 @@ object frmMain: TfrmMain
       ParentColor = False
       TabOrder = 0
       Transparent = True
+      ExplicitLeft = 733
       object ColorSettingsToolButton: TToolButton
         Left = 0
         Top = 0
@@ -295,6 +319,20 @@ object frmMain: TfrmMain
         Action = actMenu
         AutoSize = True
       end
+    end
+    object ProcessorDialectComboBox: TComboBox
+      Left = 541
+      Top = 8
+      Width = 170
+      Height = 23
+      Style = csDropDownList
+      Anchors = [akTop, akRight]
+      TabOrder = 2
+      OnSelect = ProcessorDialectComboBoxSelect
+      Items.Strings = (
+        'DaringFireball'
+        'CommonMark')
+      ExplicitLeft = 537
     end
   end
   object OpenDialog: TOpenDialog

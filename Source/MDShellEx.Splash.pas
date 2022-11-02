@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021 (Ethea S.r.l.)                                      }
+{       Copyright (c) 2021-2022 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -34,7 +34,7 @@ uses
 type
   TSplashForm = class(TForm)
     Image1: TImage;
-    SVGIconImage1: TSVGIconImage;
+    SVGIconImage: TSVGIconImage;
     lbVersion: TLabel;
     lbLoad: TLabel;
     procedure FormShow(Sender: TObject);
