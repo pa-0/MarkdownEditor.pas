@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021-2022 (Ethea S.r.l.)                                 }
+{       Copyright (c) 2021-2023 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -63,6 +63,7 @@ uses
   SysUtils,
   ShlObj,
   System.Win.ComConst,
+  MDShellEx.Misc,
   ComServ;
 
 constructor TThumbnailHandlerRegister.Create(ATThumbnailHandlerClass: TThumbnailHandlerClass;
@@ -147,6 +148,13 @@ var
   sAppID: string;
   sClassID: string;
   LRegKey: string;
+  LExtension: string;
+
+  procedure RegisterExtension(const AExtension: string);
+  begin
+    LRegKey := RootPrefix + AExtension + '\shellex\' + ThumbnailProviderGUID;
+    CreateRegKey(LRegKey, '', sClassID, RootKey);
+  end;
 begin
 
   if Instancing = ciInternal then
@@ -170,12 +178,11 @@ begin
     begin
       CreateRegKey(sComServerKey, 'ProgID', ProgID, RootKey);
 
-      //Add extension for .md files
-      LRegKey := RootPrefix + '.md' + '\shellex\' + ThumbnailProviderGUID;
-      CreateRegKey(LRegKey, '', sClassID, RootKey);
+      //Register for supported files ('.md','.mkd','.mdwn','.mdown','.mdtxt','.mdtext','.markdown')
+      for LExtension in AMarkDownFileExt do
+        RegisterExtension(LExtension);
 
       CreateRegKey(sComServerKey, 'VersionIndependentProgID', ProgID, RootKey);
-
       LRegKey := RootPrefix + ProgID + '\shellex\' + ThumbnailProviderGUID;
       CreateRegKey(LRegKey, '', sClassID, RootKey);
     end;

@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021-2022 (Ethea S.r.l.)                                 }
+{       Copyright (c) 2021-2023 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -56,6 +56,7 @@ uses
 //  {$ENDIF}
   , Vcl.Styles.Ext
   , HTMLUn2
+  , HtmlGlobals
   , HtmlView
   , uDragDropUtils
   ;
@@ -75,7 +76,7 @@ resourcestring
   STATE_INSERT = 'Insert';
   STATE_OVERWRITE = 'Overwrite';
   CLOSING_PROBLEMS = 'Problem closing!';
-  CONFIRM_ABANDON = 'File "%s" not saved! Confirm abandon changes?';
+  CONFIRM_CHANGES = 'ATTENTION: the content of file "%s" is changed: do you want to save the file?';
 
 type
   TEditingFile = class
@@ -150,7 +151,7 @@ type
     actnReduceFont: TAction;
     actnSaveAs: TAction;
     StatusBar: TStatusBar;
-    actnColorSettings: TAction;
+    actnSettings: TAction;
     SynEditSearch: TSynEditSearch;
     SV: TSplitView;
     catMenuItems: TCategoryButtons;
@@ -162,7 +163,7 @@ type
     VirtualImageList: TVirtualImageList;
     actMenu: TAction;
     MenuButtonToolbar: TToolBar;
-    ToolButton1: TToolButton;
+    MenuToolButton: TToolButton;
     PageSetupToolButton: TToolButton;
     PrinterSetupToolButton: TToolButton;
     AboutToolButton: TToolButton;
@@ -193,6 +194,10 @@ type
     PopHTMLSep: TMenuItem;
     ProcessorDialectLabel: TLabel;
     ProcessorDialectComboBox: TComboBox;
+    VirtualImageList20: TVirtualImageList;
+    PanelCloseButton: TPanel;
+    SVGIconImageCloseButton: TSVGIconImage;
+    LoadTimer: TTimer;
     procedure WMGetMinMaxInfo(var Message: TWMGetMinMaxInfo); message WM_GETMINMAXINFO;
     procedure acOpenFileExecute(Sender: TObject);
     procedure acSaveExecute(Sender: TObject);
@@ -226,8 +231,8 @@ type
     procedure actnFontExecute(Sender: TObject);
     procedure actnSaveAsExecute(Sender: TObject);
     procedure ActionListUpdate(Action: TBasicAction; var Handled: Boolean);
-    procedure actnColorSettingsExecute(Sender: TObject);
-    procedure actnColorSettingsUpdate(Sender: TObject);
+    procedure actnSettingsExecute(Sender: TObject);
+    procedure actnSettingsUpdate(Sender: TObject);
     procedure actionForFileUpdate(Sender: TObject);
     procedure HistoryListClick(Sender: TObject);
     procedure actMenuExecute(Sender: TObject);
@@ -265,7 +270,15 @@ type
     procedure acSaveHTMLFileExecute(Sender: TObject);
     procedure acSavePDFFileExecute(Sender: TObject);
     procedure ProcessorDialectComboBoxSelect(Sender: TObject);
+    procedure PageControlMouseMove(Sender: TObject; Shift: TShiftState; X,
+      Y: Integer);
+    procedure PageControlMouseEnter(Sender: TObject);
+    procedure PageControlMouseLeave(Sender: TObject);
+    procedure SVGIconImageCloseButtonClick(Sender: TObject);
+    procedure FormKeyPress(Sender: TObject; var Key: Char);
+    procedure LoadTimerTimer(Sender: TObject);
   private
+    FEditingInProgress: Boolean;
     FirstAction: Boolean;
     MinFormWidth, MinFormHeight, MaxFormWidth, MaxFormHeight: Integer;
     FProcessingFiles: Boolean;
@@ -323,6 +336,10 @@ type
     function AcceptedExtensions: string;
     procedure SplitterMoved(Sender: TObject);
     procedure WriteSettingsToIni;
+    procedure ConfirmChanges(EditingFile: TEditingFile);
+    procedure HtmlViewerHotSpotClick(Sender: TObject; const ASource: ThtString;
+      var Handled: Boolean);
+    procedure ShowTabCloseButtonOnHotTab;
     property MDFontSize: Integer read FMDFontSize write SetMDFontSize;
     property HTMLFontSize: Integer read FHTMLFontSize write SetHTMLFontSize;
   protected
@@ -341,7 +358,7 @@ uses
   , System.StrUtils
   , System.UITypes
   , Winapi.ShellAPI
-  , uMisc
+  , MDShellEx.Misc
   , Xml.XMLDoc
   , dlgReplaceText
   , dlgSearchText
@@ -401,6 +418,7 @@ begin
   try
     HtmlViewer.LoadFromStream(LStream);
     HtmlViewer.VScrollBarPosition := LOldPos;
+    dmResources.StopLoadingImages(False);
     HtmlViewer.Visible := True;
   finally
     LStream.Free;
@@ -515,13 +533,13 @@ end;
 
 function TfrmMain.CanAcceptFileName(const AFileName: string): Boolean;
 begin
-  Result := pos(LowerCase(ExtractFileExt(AFileName)), AcceptedExtensions) <> 0;
+  Result := IsFileNameWithExt(AFileName, AMarkDownFileExt);
 end;
 
 function TfrmMain.AcceptedExtensions: string;
 begin
   //Check file extensions
-  Result := '.md';
+  Result := GetFileMasks(AMarkDownFileExt);
 end;
 
 function TfrmMain.OpenFile(const FileName : string;
@@ -538,7 +556,7 @@ begin
     begin
       if not CanAcceptFileName(FileName) then
         raise Exception.CreateFmt('Cannot open file with extensions different from "%s"',
-        [AcceptedExtensions]);
+          [AcceptedExtensions]);
 
       //looking for the file already opened
       EditingFile := nil;
@@ -615,6 +633,12 @@ begin
   FreeAndNil(FEditorSettings);
   FreeAndNil(FEditorOptions);
   inherited;
+end;
+
+procedure TfrmMain.FormKeyPress(Sender: TObject; var Key: Char);
+begin
+  if Key = Chr(27) then
+    dmResources.StopLoadingImages(True);
 end;
 
 procedure TfrmMain.FormMouseWheelDown(Sender: TObject; Shift: TShiftState;
@@ -721,6 +745,14 @@ procedure TfrmMain.SVClosing(Sender: TObject);
 begin
   if SV.Opened then
     SV.OpenedWidth := SV.Width;
+end;
+
+procedure TfrmMain.SVGIconImageCloseButtonClick(Sender: TObject);
+begin
+  PanelCloseButton.Visible := False;
+  PageControl.ActivePageIndex := PanelCloseButton.Tag;
+  acClose.Execute;
+  ShowTabCloseButtonOnHotTab;
 end;
 
 procedure TfrmMain.SVOpened(Sender: TObject);
@@ -832,10 +864,8 @@ begin
     for I := 0 to EditFileList.Count -1 do
     begin
       LEditingFile := TEditingFile(EditFileList.Items[I]);
-      if LEditingFile.SynEditor.Modified and
-        (MessageDlg(Format(CONFIRM_ABANDON,[LEditingFile.FileName]),
-          mtWarning, [mbYes, mbNo], 0) = mrNo) then
-          Abort;
+      //Confirm save changes
+      ConfirmChanges(LEditingFile);
       LFileList.Add(LEditingFile.FileName);
     end;
     if CurrentEditFile <> nil then
@@ -869,10 +899,25 @@ begin
   UpdateMDViewer(True);
 end;
 
+procedure TfrmMain.LoadTimerTimer(Sender: TObject);
+begin
+  if FEditingInProgress then
+  begin
+    FEditingInProgress := False;
+    dmResources.StopLoadingImages(False);
+    UpdateMDViewer(True);
+  end;
+end;
+
 procedure TfrmMain.FormCreate(Sender: TObject);
 var
   FileVersionStr: string;
+  LMarkDownMasks: string;
 begin
+  LMarkDownMasks := GetFileMasks(AMarkDownFileExt);
+  OpenDialog.Filter :=
+    Format('%s (%s)|%s', [MARKDOWN_FILES, LMarkDownMasks, LMarkDownMasks]);
+
   //Build opened-files list
   EditFileList := TObjectList.Create(True);
   FEditorOptions := TSynEditorOptionsContainer.create(self);
@@ -888,7 +933,7 @@ begin
   lblTitle.Font.Size := lblTitle.Font.Size * 2;
 
   //Version
-  FileVersionStr := uMisc.GetFileVersion(GetModuleLocation());
+  FileVersionStr := GetVersionString(GetModuleLocation());
   Application.Title := Application.Title + ' (Ver.'+FileVersionStr+')';
   Caption := Application.Title;
 
@@ -948,7 +993,7 @@ end;
 
 procedure TfrmMain.acEditCopyExecute(Sender: TObject);
 begin
- CurrentEditor.CopyToClipboard;
+  CurrentEditor.CopyToClipboard;
 end;
 
 procedure TfrmMain.acEditCopyUpdate(Sender: TObject);
@@ -987,6 +1032,9 @@ procedure TfrmMain.SynEditChange(Sender: TObject);
 begin
   if Sender = CurrentEditor then
   begin
+    FEditingInProgress := True;
+    LoadTimer.Enabled := False;
+    dmResources.StopLoadingImages(True);
     UpdateMDViewer(False);
   end;
 end;
@@ -1015,6 +1063,7 @@ begin
     //Use TAG of tabsheet to store the object pointer
     LTabSheet.Tag := NativeInt(Pointer(EditingFile));
     LTabSheet.Caption := EditingFile.Name;
+    LTabSheet.Hint := EditingFile.FileName;
     LTabSheet.Imagename := EditingFile.ImageName+'-gray';
     LTabSheet.Parent := PageControl;
     LTabSheet.TabVisible := True;
@@ -1027,7 +1076,7 @@ begin
     LFEViewer.Parent := LTabSheet;
     LFEViewer.PopupMenu := PopHTMLViewer;
     LFEViewer.DefBackground := StyleServices.GetSystemColor(clWindow);
-    LFEViewer.OnHotSpotClick := dmResources.HtmlViewerHotSpotClick;
+    LFEViewer.OnHotSpotClick := HtmlViewerHotSpotClick;
     LFEViewer.OnImageRequest := dmResources.HtmlViewerImageRequest;
     LFEViewer.ScrollBars := TScrollStyle.ssVertical;
 
@@ -1114,6 +1163,43 @@ begin
   UpdateMDViewer(False);
 end;
 
+procedure TfrmMain.PageControlMouseMove(Sender: TObject; Shift: TShiftState; X,
+  Y: Integer);
+{$WRITEABLECONST ON}
+const oldPos : integer = -2;
+{$WRITEABLECONST OFF}
+var
+  iot : integer;
+
+  LhintPause: Integer;
+  LTabIndex: Integer;
+begin
+  inherited;
+  LTabIndex := PageControl.IndexOfTabAt(X, Y);
+  if (LTabIndex >= 0) and (PageControl.Hint <> PageControl.Pages[LTabIndex].Hint) then
+  begin
+    LHintPause := Application.HintPause;
+    try
+      if PageControl.Hint <> '' then
+        Application.HintPause := 0;
+      Application.CancelHint;
+      PageControl.Hint := PageControl.Pages[LTabIndex].Hint;
+      PageControl.ShowHint := true;
+      Application.ProcessMessages; // force hint to appear
+    finally
+      Application.HintPause := LHintPause;
+    end;
+  end;
+
+  iot := TTabControl(Sender).IndexOfTabAt(x,y);
+  if (iot > -1) then
+  begin
+    if iot <> oldPos then
+      ShowTabCloseButtonOnHotTab;
+  end;
+  oldPos := iot;
+end;
+
 procedure TfrmMain.ProcessorDialectComboBoxSelect(Sender: TObject);
 var
   LDialect: TMarkdownProcessorDialect;
@@ -1159,6 +1245,23 @@ begin
     Result := nil;
 end;
 
+procedure TfrmMain.ConfirmChanges(EditingFile: TEditingFile);
+var
+  LConfirm: integer;
+begin
+  //Confirm save changes
+  if EditingFile.SynEditor.Modified then
+  begin
+    LConfirm := MessageDlg(Format(CONFIRM_CHANGES,[EditingFile.FileName]),
+      mtWarning, [mbYes, mbNo], 0);
+    if LConfirm = mrYes then
+      EditingFile.SaveToFile
+    else if LConfirm = mrCancel then
+      Abort;
+    //if LConfirm = mrNo continue without saving
+  end;
+end;
+
 procedure TfrmMain.RemoveEditingFile(EditingFile: TEditingFile);
 var
   i : integer;
@@ -1176,13 +1279,10 @@ begin
   if pos = -1 then
     raise EComponentError.Create(CLOSING_PROBLEMS);
 
-  //Confirm abandon changes
-  if EditingFile.SynEditor.Modified then
-  begin
-    if MessageDlg(Format(CONFIRM_ABANDON,[EditingFile.FileName]),
-      mtWarning, [mbYes, mbNo], 0) = mrNo then
-      Abort;
-  end;
+  //Confirm save changes
+  ConfirmChanges(EditingFile);
+
+  PanelCloseButton.Visible := False;
 
   //Rimuovo il riferimento
   if FMDFile = EditingFile then
@@ -1211,6 +1311,7 @@ procedure TfrmMain.acCloseAllExecute(Sender: TObject);
 begin
   FProcessingFiles := True;
   try
+    PanelCloseButton.Visible := False;
     while EditFileList.Count > 0 do
       RemoveEditingFile(TEditingFile(EditFileList.items[0]));
   finally
@@ -1660,6 +1761,9 @@ begin
   if not FirstAction then
   begin
     FirstAction := True;
+    //Load previous opened-files
+    LoadOpenedFiles;
+
     //Initialize Open and Save Dialog with application path
     LFileName := ParamStr(1);
     if LFileName <> '' then
@@ -1675,10 +1779,8 @@ begin
 
     OpenDialog.InitialDir := InitialDir;
     SaveDialog.InitialDir := InitialDir;
-
-    //Load previous opened-files
-    LoadOpenedFiles;
   end;
+  LoadTimer.Enabled := True;
 end;
 
 procedure TfrmMain.actMenuExecute(Sender: TObject);
@@ -1697,7 +1799,7 @@ begin
     FEditorSettings.WriteSettings(nil, FEditorOptions);
 end;
 
-procedure TfrmMain.actnColorSettingsExecute(Sender: TObject);
+procedure TfrmMain.actnSettingsExecute(Sender: TObject);
 begin
   if ShowSettings(DialogPosRect,
     Title_MDViewer,
@@ -1710,9 +1812,9 @@ begin
   end;
 end;
 
-procedure TfrmMain.actnColorSettingsUpdate(Sender: TObject);
+procedure TfrmMain.actnSettingsUpdate(Sender: TObject);
 begin
-  actnColorSettings.Enabled := True;
+  actnSettings.Enabled := True;
 end;
 
 procedure TfrmMain.actionForFileUpdate(Sender: TObject);
@@ -1866,6 +1968,77 @@ begin
   finally
     SendMessage(CurrentEditFile.HTMLViewer.Handle, WM_SETREDRAW, WPARAM(True), 0);
     lHtmlToPdf.Free;
+  end;
+end;
+
+procedure TfrmMain.HtmlViewerHotSpotClick(Sender: TObject;
+  const ASource: ThtString; var Handled: Boolean);
+var
+  LFileName: TFileName;
+  LWorkingFolder: string;
+begin
+  LFileName := ASource;
+  if not FileExists(LFileName) then
+  begin
+    //Search file in local folder same as current edit file
+    LWorkingFolder := IncludeTrailingPathDelimiter(
+      CurrentEditFile.HTMLViewer.ServerRoot);
+    LFileName := LWorkingFolder+LFileName;
+  end;
+  //Search file with markdown extensions
+  if not FileExists(LFileName) then
+    FileWithExtExists(LFileName, AMarkDownFileExt);
+
+  if FileExists(LFileName) then
+  begin
+    OpenFile(LFileName, True);
+    UpdateMDViewer(True);
+    Handled := True;
+  end
+  else
+  begin
+    dmResources.HtmlViewerHotSpotClick(Sender,
+      ASource, Handled);
+  end;
+end;
+
+procedure TfrmMain.ShowTabCloseButtonOnHotTab;
+var
+  iot : integer;
+  cp : TPoint;
+  rectOver: TRect;
+begin
+  cp := PageControl.ScreenToClient(Mouse.CursorPos);
+  iot := PageControl.IndexOfTabAt(cp.X, cp.Y);
+
+  if iot > -1 then
+  begin
+    rectOver := PageControl.TabRect(iot);
+
+    PanelCloseButton.Left := rectOver.Right - PanelCloseButton.Width;
+    PanelCloseButton.Top := rectOver.Top + ((rectOver.Height div 2) - (PanelCloseButton.Height div 2)) + 1;
+
+    PanelCloseButton.Tag := iot;
+    PanelCloseButton.Show;
+  end
+  else
+  begin
+    PanelCloseButton.Tag := -1;
+    PanelCloseButton.Hide;
+  end;
+end;
+
+procedure TfrmMain.PageControlMouseEnter(Sender: TObject);
+begin
+  ShowTabCloseButtonOnHotTab;
+end;
+
+procedure TfrmMain.PageControlMouseLeave(Sender: TObject);
+begin
+  if PanelCloseButton <> FindVCLWindow(Mouse.CursorPos) then
+  begin
+    PanelCloseButton.Hide;
+    PanelCloseButton.Tag := -1;
   end;
 end;
 
