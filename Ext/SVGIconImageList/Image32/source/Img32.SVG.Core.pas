@@ -2,10 +2,10 @@ unit Img32.SVG.Core;
 
 (*******************************************************************************
 * Author    :  Angus Johnson                                                   *
-* Version   :  4.3                                                             *
-* Date      :  27 September 2022                                               *
+* Version   :  4.5                                                             *
+* Date      :  17 July 2024                                                    *
 * Website   :  http://www.angusj.com                                           *
-* Copyright :  Angus Johnson 2019-2022                                         *
+* Copyright :  Angus Johnson 2019-2024                                         *
 *                                                                              *
 * Purpose   :  Essential structures and functions to read SVG files            *
 *                                                                              *
@@ -93,7 +93,7 @@ type
 
   TSvgItalicSyle  = (sfsUndefined, sfsNone, sfsItalic);
   TFontDecoration = (fdUndefined, fdNone, fdUnderline, fdStrikeThrough);
-  TSvgTextAlign = (staUndefined, staLeft, staCenter, staRight);
+  TSvgTextAlign = (staUndefined, staLeft, staCenter, staRight, staJustify);
 
   TSVGFontInfo = record
     family      : TTtfFontFamily;
@@ -191,7 +191,7 @@ type
   TSvgParser = class
   private
     svgStream : TMemoryStream;
-    procedure ParseStream;
+    procedure ParseUtf8Stream;
   public
     classStyles :TClassStylesList;
     xmlHeader   : TXmlEl;
@@ -225,10 +225,11 @@ type
   function IsNumPending(var c: PUTF8Char;
     endC: PUTF8Char; ignoreComma: Boolean): Boolean;
   function UTF8StringToColor32(const value: UTF8String; var color: TColor32): Boolean;
-  function MakeDashArray(const dblArray: TArrayOfDouble; scale: double): TArrayOfInteger;
+  function ScaleDashArray(const dblArray: TArrayOfDouble; scale: double): TArrayOfDouble;
   function Match(c: PUTF8Char; const compare: UTF8String): Boolean; overload;
   function Match(const compare1, compare2: UTF8String): Boolean; overload;
   function ToUTF8String(var c: PUTF8Char; endC: PUTF8Char): UTF8String;
+  function ToTrimmedUTF8String(var c: PUTF8Char; endC: PUTF8Char): UTF8String;
 
   //special parsing functions //////////////////////////////////////////
   procedure ParseStyleElementContent(const value: UTF8String; stylesList: TClassStylesList);
@@ -242,6 +243,13 @@ type
 
   function SkipBlanks(var c: PUTF8Char; endC: PUTF8Char): Boolean;
   function SkipBlanksAndComma(var current: PUTF8Char; currentEnd: PUTF8Char): Boolean;
+
+  procedure ConvertUnicodeToUtf8(memStream: TMemoryStream);
+
+  function GetScale(src, dst: double): double;
+  function GetScaleForBestFit(srcW, srcH, dstW, dstH: double): double;
+
+  function Base64Decode(const str: PAnsiChar; len: integer; memStream: TMemoryStream): Boolean;
 
 type
   TSetOfUTF8Char = set of UTF8Char;
@@ -284,8 +292,104 @@ const
   {$I Img32.SVG.HtmlHashConsts.inc}
 
 //------------------------------------------------------------------------------
+// Base64 (MIME) Encode & Decode and other encoding functions ...
+//------------------------------------------------------------------------------
+
+type
+  PFourChars = ^TFourChars;
+  TFourChars = record
+    c1: ansichar;
+    c2: ansichar;
+    c3: ansichar;
+    c4: ansichar;
+  end;
+
+function Chr64ToVal(c: ansiChar): integer; {$IFDEF INLINE} inline; {$ENDIF}
+begin
+  case c of
+    '+': result := 62;
+    '/': result := 63;
+    '0'..'9': result := ord(c) + 4;
+    'A'..'Z': result := ord(c) -65;
+    'a'..'z': result := ord(c) -71;
+    else Raise Exception.Create('Corrupted MIME encoded text');
+  end;
+end;
+//------------------------------------------------------------------------------
+
+function FrstChr(c: PFourChars): ansichar; {$IFDEF INLINE} inline; {$ENDIF}
+begin
+  result := ansichar(Chr64ToVal(c.c1) shl 2 or Chr64ToVal(c.c2) shr 4);
+end;
+//------------------------------------------------------------------------------
+
+function ScndChr(c: PFourChars): ansichar; {$IFDEF INLINE} inline; {$ENDIF}
+begin
+  result := ansichar(Chr64ToVal(c.c2) shl 4 or Chr64ToVal(c.c3) shr 2);
+end;
+//------------------------------------------------------------------------------
+
+function ThrdChr(c: PFourChars): ansichar; {$IFDEF INLINE} inline; {$ENDIF}
+begin
+  result := ansichar( Chr64ToVal(c.c3) shl 6 or Chr64ToVal(c.c4) );
+end;
+//------------------------------------------------------------------------------
+
+function Base64Decode(const str: PAnsiChar; len: integer; memStream: TMemoryStream): Boolean;
+var
+  i, j, extra: integer;
+  Chars4: PFourChars;
+  dst: PAnsiChar;
+begin
+  result := false;
+  if (len = 0) or (len mod 4 > 0) or not Assigned(memStream) then exit;
+  if str[len-2] = '=' then extra := 2
+  else if str[len-1] = '=' then extra := 1
+  else extra := 0;
+  memStream.SetSize(LongInt((len div 4 * 3) - extra));
+  dst := memStream.Memory;
+  Chars4 := @str[0];
+  i := 0;
+  try
+    for j := 1 to (len div 4) -1 do
+    begin
+      dst[i] := FrstChr(Chars4);
+      dst[i+1] := ScndChr(Chars4);
+      dst[i+2] := ThrdChr(Chars4);
+      inc(pbyte(Chars4),4);
+      inc(i,3);
+    end;
+    dst[i] := FrstChr(Chars4);
+    if extra < 2  then dst[i+1] := ScndChr(Chars4);
+    if extra < 1 then dst[i+2] := ThrdChr(Chars4);
+  except
+    Exit;
+  end;
+  Result := true;
+end;
+
+//------------------------------------------------------------------------------
 // Miscellaneous functions ...
 //------------------------------------------------------------------------------
+
+function GetScale(src, dst: double): double;
+begin
+  Result := dst / src;
+  if (SameValue(Result, 1, 0.00001)) then Result := 1;
+end;
+//------------------------------------------------------------------------------
+
+function GetScaleForBestFit(srcW, srcH, dstW, dstH: double): double;
+var
+  sx,sy: double;
+begin
+  sx := dstW / srcW;
+  sy := dstH / srcH;
+  if sy < sx then sx := sy;
+  if (SameValue(sx, 1, 0.00001)) then
+    Result := 1 else
+    Result := sx;
+end;
 
 function ClampRange(val, min, max: double): double;
   {$IFDEF INLINE} inline; {$ENDIF}
@@ -360,15 +464,21 @@ end;
 
 function GetXmlEncoding(memory: Pointer; len: integer): TSvgEncoding;
 var
-  p: PUTF8Char;
+  p, p1: PUTF8Char;
 begin
   Result := eUnknown;
   if (len < 4) or not Assigned(memory) then Exit;
   p := PUTF8Char(memory);
+  p1 := (p + 1);
   case p^ of
-    #$EF: if ((p +1)^ = #$BB) and ((p +2)^ = #$BF) then Result := eUtf8;
-    #$FF: if ((p +1)^ = #$FE) then Result := eUnicodeLE;
-    #$FE: if ((p +1)^ = #$FF) then Result := eUnicodeBE;
+    #$EF: if (p1^ = #$BB) then
+      if ((p +2)^ = #$BF) then
+        Result := eUtf8 else
+        Exit;
+    #$FF: if (p1^ = #$FE) or (p1^ = #0) then
+      Result := eUnicodeLE;
+    #$FE: if (p1^ = #$FF) then
+      Result := eUnicodeBE;
   end;
 end;
 //------------------------------------------------------------------------------
@@ -737,21 +847,25 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function AllTrim(var name: UTF8String): Boolean;
+function ToTrimmedUTF8String(var c: PUTF8Char; endC: PUTF8Char): UTF8String;
 var
-  i, len: integer;
+  len: integer;
+  start: PUTF8Char;
 begin
-  len := Length(name);
-  i := 0;
-  while (len > 0) and (name[1] <= space) do
+  start := c;
+  c := endC;
+  if endC > start then
   begin
-    inc(i); dec(len);
+    // trim left
+    while (start < endC) and (start^ <= #32) do Inc(start);
+    // trim right
+    while (endC > start) and (endC[-1] <= #32) do Dec(endC);
   end;
-  if i > 0 then Delete(name, 1, i);
-  Result := len > 0;
-  if not Result then Exit;
-  while name[len] <= space do dec(len);
-  SetLength(name, len);
+
+  len := endC - start;
+  SetLength(Result, len);
+  if len = 0 then Exit;
+  Move(start^, Result[1], len * SizeOf(UTF8Char));
 end;
 //------------------------------------------------------------------------------
 
@@ -895,7 +1009,7 @@ begin
             MatrixSkew(mat, 0, DegToRad(values[0]));
          end;
     end;
-    Result := MatrixMultiply(Result, mat);
+    MatrixMultiply2(mat, Result);
   end;
 end;
 //------------------------------------------------------------------------------
@@ -1170,7 +1284,7 @@ begin
     else
       Exit;
     color :=  clr;
-  end else                                        //color name lookup
+  end else                          //color name lookup
   begin
     i := ColorConstList.IndexOf(string(value));
     if i < 0 then Exit;
@@ -1187,28 +1301,21 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function MakeDashArray(const dblArray: TArrayOfDouble; scale: double): TArrayOfInteger;
+function ScaleDashArray(const dblArray: TArrayOfDouble; scale: double): TArrayOfDouble;
 var
   i, len: integer;
-  dist: double;
 begin
-  dist := 0;
   len := Length(dblArray);
   SetLength(Result, len);
-  for i := 0 to len -1 do
-  begin
-    Result[i] := Ceil(dblArray[i] * scale);
-    dist := Result[i] + dist;
-  end;
+  if len = 0 then Exit;
 
-  if dist = 0 then
-  begin
-    Result := nil;
-  end
-  else if Odd(len) then
+  for i := 0 to len -1 do
+    Result[i] := dblArray[i] * scale;
+
+  if Odd(len) then
   begin
     SetLength(Result, len *2);
-    Move(Result[0], Result[len], len * SizeOf(integer));
+    Move(Result[0], Result[len], len * SizeOf(double));
   end;
 end;
 //------------------------------------------------------------------------------
@@ -1280,11 +1387,13 @@ begin
     c2 := c;
     while (c < endC) and (c^ <> '}') do inc(c);
     if (c = endC) then break;
-    aStyle := ToUTF8String(c2, c);
-
-    //finally, for each class name add (or append) this style
-    for i := 0 to High(names) do
-      stylesList.AddAppendStyle(names[i], aStyle);
+    aStyle := ToTrimmedUTF8String(c2, c);
+    if aStyle <> '' then
+    begin
+      //finally, for each class name add (or append) this style
+      for i := 0 to High(names) do
+        stylesList.AddAppendStyle(names[i], aStyle);
+    end;
     names := nil;
     len := 0; cap := 0;
     inc(c);
@@ -1332,6 +1441,17 @@ begin
 end;
 //------------------------------------------------------------------------------
 
+function TagNameToLower(const tagName: UTF8String): UTF8String;
+var
+  i: integer;
+begin
+  Result := tagName;
+  for i := 1 to Length(Result) do
+    if (Result[i] >= 'A') and (Result[i] <= 'Z') then
+      Result[i] := AnsiChar(Ord(Result[i]) + 32);
+end;
+//------------------------------------------------------------------------------
+
 function TXmlEl.ParseHeader(var c: PUTF8Char; endC: PUTF8Char): Boolean;
 var
   style: UTF8String;
@@ -1340,7 +1460,7 @@ begin
   SkipBlanks(c, endC);
   c2 := c;;
   ParseNameLength(c, endC);
-  name := ToUTF8String(c2, c);
+  name := TagNameToLower(ToUTF8String(c2, c));
 
   //load the class's style (ie undotted style) if found.
   style := owner.classStyles.GetStyle(name);
@@ -1488,8 +1608,7 @@ begin
     c2 := c;
     inc(c);
     while (c < endC) and (c^ <> ';') do inc(c);
-    styleVal := ToUTF8String(c2, c);
-    AllTrim(styleVal);
+    styleVal := ToTrimmedUTF8String(c2, c);
     inc(c);
 
     new(attrib);
@@ -1772,7 +1891,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TSvgParser.LoadFromStream(stream: TStream): Boolean;
+procedure ConvertUnicodeToUtf8(memStream: TMemoryStream);
 var
   i, len: LongInt;
   encoding: TSvgEncoding;
@@ -1780,34 +1899,37 @@ var
   wc: PWord;
   utf8: UTF8String;
 begin
+  memStream.Position := 0;
+  encoding := GetXmlEncoding(memStream.Memory, memStream.Size);
+  if not (encoding in [eUnicodeLE, eUnicodeBE]) then Exit;
+  SetLength(s, memStream.Size div 2);
+  Move(memStream.Memory^, s[1], memStream.Size);
+  if encoding = eUnicodeBE then
+  begin
+    wc := @s[1];
+    for i := 1 to Length(s) do
+    begin
+      wc^ := Swap(wc^);
+      inc(wc);
+    end;
+  end;
+  utf8 := UTF8Encode(s);
+  len := Length(utf8);
+  memStream.SetSize(len);
+  Move(utf8[1], memStream.Memory^, len);
+end;
+//------------------------------------------------------------------------------
+
+function TSvgParser.LoadFromStream(stream: TStream): Boolean;
+begin
   Clear;
   Result := true;
   try
     svgStream.LoadFromStream(stream);
-
-    //check encoding and set to UTF-8 if necessary
-    encoding := GetXmlEncoding(svgStream.Memory, svgStream.Size);
-    case encoding of
-      eUnicodeLE, eUnicodeBE:
-        begin
-          SetLength(s, svgStream.Size div 2);
-          Move(svgStream.Memory^, s[1], svgStream.Size);
-          if encoding = eUnicodeBE then
-          begin
-            wc := @s[1];
-            for i := 1 to Length(s) do
-            begin
-              wc^ := Swap(wc^);
-              inc(wc);
-            end;
-          end;
-          utf8 := UTF8Encode(s);
-          len := Length(utf8);
-          svgStream.SetSize(len);
-          Move(utf8[1], svgStream.Memory^, len);
-        end;
-    end;
-    ParseStream;
+    // very few SVG files are unicode encoded, almost all are Utf8
+    // so it's more efficient to parse them all as Utf8 encoded files
+    ConvertUnicodeToUtf8(svgStream);
+    ParseUtf8Stream;
   except
     Result := false;
   end;
@@ -1831,7 +1953,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TSvgParser.ParseStream;
+procedure TSvgParser.ParseUtf8Stream;
 var
   c, endC: PUTF8Char;
 begin
@@ -1914,8 +2036,8 @@ end;
 
 procedure TValue.Init;
 begin
-  rawVal      := InvalidD;
-  unitType          := utNumber;
+  rawVal   := InvalidD;
+  unitType := utNumber;
 end;
 //------------------------------------------------------------------------------
 

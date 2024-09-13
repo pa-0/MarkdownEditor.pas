@@ -3,8 +3,9 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021-2023 (Ethea S.r.l.)                                 }
+{       Copyright (c) 2021-2024 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
+{       Contributors: Ariel Montes                                             }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
 {                                                                              }
@@ -39,6 +40,7 @@ uses
   MDShellEx.Settings
   , System.Generics.Collections
   , Vcl.PlatformVclStylesActnCtrls
+  {$IFNDEF NO_VCL_STYLES}
   , Vcl.Styles.Fixes
   , Vcl.Styles.FormStyleHooks
   , Vcl.Styles.NC
@@ -48,17 +50,24 @@ uses
   , Vcl.Styles.Utils
   , Vcl.Styles.Utils.SysControls
   , Vcl.Styles.UxTheme
-//  {$IFDEF WIN32}
   , Vcl.Styles.Hooks
   , Vcl.Styles.Utils.Forms
   , Vcl.Styles.Utils.ComCtrls
   , Vcl.Styles.Utils.StdCtrls
-//  {$ENDIF}
   , Vcl.Styles.Ext
+  {$ENDIF}
+  , dlgInputUrl
   , HTMLUn2
   , HtmlGlobals
   , HtmlView
   , uDragDropUtils
+  , Vcl.StyledButton
+  , Vcl.StyledToolbar
+  , Vcl.ButtonStylesAttributes
+  , Vcl.StyledButtonGroup
+  , Vcl.StyledCategoryButtons
+  , Vcl.FormTabsBar
+  , ChildForm
   ;
 
 const
@@ -67,7 +76,7 @@ const
 resourcestring
   PAGE_HEADER_FIRST_LINE_LEFT = '$TITLE$';
   PAGE_HEADER_FIRST_LINE_RIGHT = 'Page count: $PAGECOUNT$';
-  PAGE_FOOTER_FIRST_LINE_LEFT = 'Print date: $DATE$. Ora: $TIME$';
+  PAGE_FOOTER_FIRST_LINE_LEFT = 'Print Date: $DATE$. Time: $TIME$';
   PAGE_FOOTER_FIRST_LINE_RIGHT = 'Page $PAGENUM$ of $PAGECOUNT$';
   FILE_NOT_FOUND = 'File "%s" not found!';
   SMODIFIED = 'Changed';
@@ -76,33 +85,42 @@ resourcestring
   STATE_INSERT = 'Insert';
   STATE_OVERWRITE = 'Overwrite';
   CLOSING_PROBLEMS = 'Problem closing!';
+  STR_ERROR = 'ERROR!';
+  STR_UNEXPECTED_ERROR = 'UNEXPECTED ERROR!';
   CONFIRM_CHANGES = 'ATTENTION: the content of file "%s" is changed: do you want to save the file?';
+  FILE_CHANGED_RELOAD = 'File "%s" Date/Time changed! Do you want to reload it?';
 
 type
   TEditingFile = class
   private
-    FIcon : TIcon;
+    //FIcon : TIcon;
     FFileName : string;
+    FFileAge: TDateTime;
     FExtension: string;
     FShowXMLText: Boolean;
     FMarkDownFile: TMarkDownFile;
     FHTMLViewer: THTMLViewer;
-    FUseDarkStyle: Boolean;
+    FEditorSettings: TEditorSettings;
+    FChildForm: TMDIChildForm;
     procedure ReadFromFile;
     procedure SaveToFile;
     function GetFileName: string;
     function GetName: string;
     procedure SetFileName(const Value: string);
+    procedure LoadFromFile(const AFileName: string);
     function GetImageName: string;
     procedure SetHTMLViewer(const Value: THTMLViewer);
     procedure UpdateRootPath;
+    function GetServerRoot: string;
+    procedure SetChildForm(const Value: TMDIChildForm);
+    procedure UpdateFileNameInChildForm;
   public
     SynEditor: TSynEdit;
-    TabSheet: TTabSheet;
     Splitter: TSplitter;
-    Constructor Create(const EditFileName : string;
-      const AUseDarkStyle: Boolean);
-    Destructor Destroy; override;
+    property ChildForm: TMDIChildForm read FChildForm write SetChildForm;
+    constructor Create(const EditFileName : string;
+      const AEditorSettings: TEditorSettings);
+    destructor Destroy; override;
     procedure ShowMarkDownAsHTML(const ASettings: TEditorSettings;
       const AReloadImages: Boolean);
     property HTMLViewer: THTMLViewer read FHTMLViewer write SetHTMLViewer;
@@ -110,6 +128,7 @@ type
     property Name: string read GetName; //only name of file
     property ImageName: string read GetImageName;
     property Extension: string read FExtension;
+    property ServerRoot: string read GetServerRoot;
   end;
 
   TfrmMain = class(TForm, IDragDrop)
@@ -154,50 +173,94 @@ type
     actnSettings: TAction;
     SynEditSearch: TSynEditSearch;
     SV: TSplitView;
-    catMenuItems: TCategoryButtons;
+    catMenuItems: TStyledCategoryButtons;
     panlTop: TPanel;
     lblTitle: TLabel;
-    SettingsToolBar: TToolBar;
-    ColorSettingsToolButton: TToolButton;
-    EditOptionsToolButton: TToolButton;
+    SettingsToolBar: TStyledToolbar;
+    ColorSettingsToolButton: TStyledToolButton;
+    EditOptionsToolButton: TStyledToolButton;
     VirtualImageList: TVirtualImageList;
     actMenu: TAction;
-    MenuButtonToolbar: TToolBar;
-    MenuToolButton: TToolButton;
-    PageSetupToolButton: TToolButton;
-    PrinterSetupToolButton: TToolButton;
-    AboutToolButton: TToolButton;
-    QuitToolButton: TToolButton;
-    ToolButton9: TToolButton;
+    MenuButtonToolbar: TStyledToolbar;
+    MenuToolButton: TStyledToolButton;
+    PageSetupToolButton: TStyledToolButton;
+    PrinterSetupToolButton: TStyledToolButton;
+    AboutToolButton: TStyledToolButton;
+    QuitToolButton: TStyledToolButton;
+    SepToolButton: TStyledToolButton;
     OpenRecentAction: TAction;
     RecentPopupMenu: TPopupMenu;
     SaveMenuItem: TMenuItem;
     CloseMenuItem: TMenuItem;
     Sep1MenuItem: TMenuItem;
     SelectAllMenuItem: TMenuItem;
-    Reformattext1: TMenuItem;
     N1: TMenuItem;
-    CloseAll1: TMenuItem;
+    CloseAllMenuItem: TMenuItem;
     ClientPanel: TPanel;
-    PageControl: TPageControl;
     PopHTMLViewer: TPopupMenu;
     acZoomIn: TAction;
     acZoomOut: TAction;
-    Zoom1: TMenuItem;
-    Zoom2: TMenuItem;
+    ZoomInMenuItem: TMenuItem;
+    ZoomOutMenuItem: TMenuItem;
     acSaveHTMLFile: TAction;
-    SaveHTMLfile1: TMenuItem;
+    SaveHTMLfileMenuItem: TMenuItem;
     acSavePDFFile: TAction;
-    SavePDFfile1: TMenuItem;
-    Chiudi1: TMenuItem;
-    Chiuditutto1: TMenuItem;
+    SavePDFfileMenuItem: TMenuItem;
+    Close_MenuItem: TMenuItem;
+    Close_AllMenuItem: TMenuItem;
     PopHTMLSep: TMenuItem;
     ProcessorDialectLabel: TLabel;
     ProcessorDialectComboBox: TComboBox;
     VirtualImageList20: TVirtualImageList;
-    PanelCloseButton: TPanel;
-    SVGIconImageCloseButton: TSVGIconImage;
     LoadTimer: TTimer;
+    VirtualImageListToolBar: TVirtualImageList;
+    ToolbarActionList: TActionList;
+    acHeader1: TAction;
+    acHeader2: TAction;
+    acHeader3: TAction;
+    acLink: TAction;
+    acImage: TAction;
+    acTable: TAction;
+    acBold: TAction;
+    acItalic: TAction;
+    acStrike: TAction;
+    acUnderline: TAction;
+    acCode: TAction;
+    acMarker: TAction;
+    acSuperscript: TAction;
+    acSubscript: TAction;
+    acUnorderedList: TAction;
+    acOrderedList: TAction;
+    acBlockquote: TAction;
+    acHorizontalRule: TAction;
+    acHelp: TAction;
+    acRefresh: TAction;
+    RefreshMenuItem: TMenuItem;
+    CheckFileChangedTimer: TTimer;
+    StyledToolbar: TStyledToolbar;
+    btHeader1: TStyledToolButton;
+    btHeader2: TStyledToolButton;
+    btHeader3: TStyledToolButton;
+    btSeparator1: TStyledToolButton;
+    btLink: TStyledToolButton;
+    btImage: TStyledToolButton;
+    btTable: TStyledToolButton;
+    btSeparator2: TStyledToolButton;
+    btBold: TStyledToolButton;
+    btItalic: TStyledToolButton;
+    btStrike: TStyledToolButton;
+    btUnderline: TStyledToolButton;
+    btCode: TStyledToolButton;
+    btMarker: TStyledToolButton;
+    btSuperscript: TStyledToolButton;
+    btSubscript: TStyledToolButton;
+    btSeparator3: TStyledToolButton;
+    btUnorderedList: TStyledToolButton;
+    btOrderedList: TStyledToolButton;
+    btBlockquote: TStyledToolButton;
+    btHorizontalRule: TStyledToolButton;
+    btSeparator4: TStyledToolButton;
+    btHelp: TStyledToolButton;
     procedure WMGetMinMaxInfo(var Message: TWMGetMinMaxInfo); message WM_GETMINMAXINFO;
     procedure acOpenFileExecute(Sender: TObject);
     procedure acSaveExecute(Sender: TObject);
@@ -213,7 +276,8 @@ type
     procedure acSearchUpdate(Sender: TObject);
     procedure acReplaceUpdate(Sender: TObject);
     procedure acCloseExecute(Sender: TObject);
-    procedure PageControlChange(Sender: TObject);
+    procedure ChildFormActivate(Sender: TObject);
+    procedure ChildFormClose(Sender: TObject; var Action: TCloseAction);
     procedure acSaveUpdate(Sender: TObject);
     procedure acCloseAllUpdate(Sender: TObject);
     procedure acCloseAllExecute(Sender: TObject);
@@ -270,20 +334,42 @@ type
     procedure acSaveHTMLFileExecute(Sender: TObject);
     procedure acSavePDFFileExecute(Sender: TObject);
     procedure ProcessorDialectComboBoxSelect(Sender: TObject);
-    procedure PageControlMouseMove(Sender: TObject; Shift: TShiftState; X,
-      Y: Integer);
-    procedure PageControlMouseEnter(Sender: TObject);
-    procedure PageControlMouseLeave(Sender: TObject);
-    procedure SVGIconImageCloseButtonClick(Sender: TObject);
+    procedure CheckFileChangedTimerTimer(Sender: TObject);
     procedure FormKeyPress(Sender: TObject; var Key: Char);
     procedure LoadTimerTimer(Sender: TObject);
+    procedure acToolbarUpdate(Sender: TObject);
+    procedure acHeader1Execute(Sender: TObject);
+    procedure acHeader2Execute(Sender: TObject);
+    procedure acHeader3Execute(Sender: TObject);
+    procedure acLinkExecute(Sender: TObject);
+    procedure acImageExecute(Sender: TObject);
+    procedure acTableExecute(Sender: TObject);
+    procedure acBoldExecute(Sender: TObject);
+    procedure acItalicExecute(Sender: TObject);
+    procedure acStrikeExecute(Sender: TObject);
+    procedure acUnderlineExecute(Sender: TObject);
+    procedure acCodeExecute(Sender: TObject);
+    procedure acMarkerExecute(Sender: TObject);
+    procedure acSuperscriptExecute(Sender: TObject);
+    procedure acSubscriptExecute(Sender: TObject);
+    procedure acUnorderedListExecute(Sender: TObject);
+    procedure acOrderedListExecute(Sender: TObject);
+    procedure acBlockquoteExecute(Sender: TObject);
+    procedure acHorizontalRuleExecute(Sender: TObject);
+    procedure acHelpExecute(Sender: TObject);
+    procedure acHelpUpdate(Sender: TObject);
+    procedure acHTMLViewerUpdate(Sender: TObject);
+    procedure acRefreshExecute(Sender: TObject);
+    procedure AppDeactivate(Sender: TObject);
+    procedure AppActivate(Sender: TObject);
   private
+    FormTabsBar: TSpecialFormTabsBar;
     FEditingInProgress: Boolean;
     FirstAction: Boolean;
     MinFormWidth, MinFormHeight, MaxFormWidth, MaxFormHeight: Integer;
     FProcessingFiles: Boolean;
     FEditorSettings: TEditorSettings;
-    currentDir: string;
+    CurrentDir: string;
     EditFileList: TObjectList;
     fSearchFromCaret: boolean;
     gbSearchBackwards: boolean;
@@ -299,16 +385,18 @@ type
     FEditorOptions: TSynEditorOptionsContainer;
     FMDFontSize: Integer;
     FHTMLFontSize: Integer;
-    FMDFile: TEditingFile;
     FDropTarget: TDropTarget;
+    CurrentChildForm: TMDIChildForm;
     // implement IDragDrop
     function DropAllowed(const FileNames: array of string): Boolean;
     procedure Drop(const FileNames: array of string);
+    function GetMarkdownHelpFileName: TFileName;
     procedure CloseSplitViewMenu;
     procedure UpdateHighlighters;
     procedure UpdateFromSettings(AEditor: TSynEdit);
     function DialogPosRect: TRect;
     procedure AdjustCompactWidth;
+    procedure AdjustViewerWidth;
     function OpenFile(const FileName: string;
       const ARaiseError: Boolean = True): Boolean;
     function AddEditingFile(const EditingFile: TEditingFile): Integer;
@@ -339,12 +427,18 @@ type
     procedure ConfirmChanges(EditingFile: TEditingFile);
     procedure HtmlViewerHotSpotClick(Sender: TObject; const ASource: ThtString;
       var Handled: Boolean);
-    procedure ShowTabCloseButtonOnHotTab;
+    procedure UpdateChildFormImage(AChildForm: TMDIChildForm; AModified: Boolean;
+      const AImageName: string);
+    procedure InsertMDCommand(const ACommand: string);
+    procedure InsertMDCommandContains(const ACommandOpen, ACommandClose: string);
+    procedure InputUrl(const APrefix: string; AType: TInputType);
     property MDFontSize: Integer read FMDFontSize write SetMDFontSize;
     property HTMLFontSize: Integer read FHTMLFontSize write SetHTMLFontSize;
   protected
     procedure CreateWindowHandle(const Params: TCreateParams); override;
     procedure DestroyWindowHandle; override;
+  public
+    procedure ManageExceptions(Sender: TObject; E: Exception);
   end;
 
 var
@@ -374,7 +468,11 @@ uses
   , SynPDF
   , vmHtmlToPdf
   , MarkdownProcessor
+  , MarkdownUtils
   , uLogExcept
+  , Vcl.StyledTaskDialog
+  , RegularExpressions
+  , MDShellEx.dlgCreateTable
   ;
 
 {$R *.dfm}
@@ -414,7 +512,7 @@ begin
   LOldPos := HtmlViewer.VScrollBarPosition;
   HtmlViewer.DefFontSize := ASettings.HTMLFontSize;
   HtmlViewer.DefFontName := ASettings.HTMLFontName;
-  LStream := TStringStream.Create(FMarkDownFile.HTML);
+  LStream := TStringStream.Create(FMarkDownFile.HTML, TEncoding.UTF8);
   try
     HtmlViewer.LoadFromStream(LStream);
     HtmlViewer.VScrollBarPosition := LOldPos;
@@ -427,27 +525,14 @@ end;
 
 procedure TEditingFile.ReadFromFile;
 begin
-  try
-    //Try loading UTF-8 file
-    SynEditor.Lines.LoadFromFile(FileName, TEncoding.UTF8);
-  except
-    on E: EEncodingError do
-    begin
-      //Try to load ANSI file
-      SynEditor.Lines.LoadFromFile(FileName, TEncoding.ANSI);
-    end
-    else
-      raise;
-  end;
+  LoadFromFile(FileName);
 end;
 
 constructor TEditingFile.Create(const EditFileName: string;
-  const AUseDarkStyle: Boolean);
-var
-  Filter : Word;
+  const AEditorSettings: TEditorSettings);
 begin
   inherited Create;
-  FUseDarkStyle := AUseDarkStyle;
+  FEditorSettings := AEditorSettings;
   FShowXMLText := False;
 
   if not IsStyleHookRegistered(TCustomSynEdit, TScrollingStyleHook) then
@@ -455,10 +540,6 @@ begin
 
   FileName := EditFileName;
   Fextension := ExtractFileExt(FileName);
-
-  FIcon := TIcon.Create;
-  if FileExists(FileName) then
-    FIcon.Handle := ExtractAssociatedIcon(hInstance, PChar(DoubleQuote(FileName)),Filter);
 end;
 
 function TEditingFile.GetFileName: string;
@@ -468,7 +549,7 @@ end;
 
 function TEditingFile.GetImageName: string;
 begin
-  if FUseDarkStyle then
+  if FEditorSettings.UseDarkStyle then
     Result := 'markdown-white'
   else
     Result := 'markdown-black';
@@ -479,15 +560,37 @@ begin
   Result := ExtractFileName(FFileName);
 end;
 
+function TEditingFile.GetServerRoot: string;
+begin
+  if HTMLViewer <> nil then
+    Result := HTMLViewer.ServerRoot
+  else
+    Result := '';
+end;
+
+procedure TEditingFile.UpdateFileNameInChildForm;
+begin
+  if Assigned(FChildForm) then
+  begin
+    FChildForm.Caption := ExtractFileName(Self.FFileName);
+    FChildForm.Hint := Self.FFileName;
+  end;
+end;
+
+procedure TEditingFile.SetChildForm(const Value: TMDIChildForm);
+begin
+  FChildForm := Value;
+  UpdateFileNameInChildForm;
+end;
+
 procedure TEditingFile.SetFileName(const Value: string);
 var
   Ext : string;
 begin
   FFileName := Value;
   Ext := ExtractFileExt(FFileName);
-  if TabSheet <> nil then
-    TabSheet.Caption := Name;
   UpdateRootPath;
+  UpdateFileNameInChildForm;
 end;
 
 procedure TEditingFile.UpdateRootPath;
@@ -504,16 +607,35 @@ end;
 
 destructor TEditingFile.Destroy;
 begin
-  FreeAndNil(FIcon);
-  FreeAndNil(HTMLViewer);
-  FreeAndNil(SynEditor);
+  //FreeAndNil(FIcon);
+  HTMLViewer := nil;
+  SynEditor := nil;
   inherited;
+end;
+
+procedure TEditingFile.LoadFromFile(const AFileName: string);
+begin
+  try
+    //Try loading UTF-8 file
+    SynEditor.Lines.LoadFromFile(AFileName, TEncoding.UTF8);
+  except
+    on E: EEncodingError do
+    begin
+      //Try to load ANSI file
+      SynEditor.Lines.LoadFromFile(AFileName, TEncoding.ANSI);
+    end
+    else
+      raise;
+  end;
+  SynEditor.Modified := False;
+  FileAge(AFileName, FFileAge);
 end;
 
 procedure TEditingFile.SaveToFile;
 begin
   SynEditor.Lines.SaveToFile(Self.FileName);
   SynEditor.Modified := False;
+  FileAge(Self.FileName, FFileAge);
   SynEditor.OnChange(SynEditor);
 end;
 
@@ -567,7 +689,7 @@ begin
         begin
           EditingFile := TEditingFile(EditFileList.Items[J]);
           I := J;
-          PageControl.ActivePageIndex := I;
+          EditingFile.ChildForm.Show;
           break;
         end;
       end;
@@ -575,7 +697,7 @@ begin
       Try
         if not Assigned(EditingFile) then
         begin
-          EditingFile := TEditingFile.Create(FileName, FEditorSettings.UseDarkStyle);
+          EditingFile := TEditingFile.Create(FileName, FEditorSettings);
           //Add file to list
           I := AddEditingFile(EditingFile);
         end;
@@ -626,6 +748,16 @@ begin
   CurrentEditFile.SaveToFile;
 end;
 
+procedure TfrmMain.AppActivate(Sender: TObject);
+begin
+  CheckFileChangedTimerTimer(CheckFileChangedTimer);
+end;
+
+procedure TfrmMain.AppDeactivate(Sender: TObject);
+begin
+  CheckFileChangedTimer.Enabled := False;
+end;
+
 procedure TfrmMain.FormDestroy(Sender: TObject);
 begin
   FreeAndNil(EditFileList);
@@ -644,26 +776,54 @@ end;
 procedure TfrmMain.FormMouseWheelDown(Sender: TObject; Shift: TShiftState;
   MousePos: TPoint; var Handled: Boolean);
 begin
-  if Shift = [ssCtrl] then
+  if (Shift = [ssCtrl]) and (CurrentEditFile <> nil) then
   begin
-    actnReduceFont.Execute;
-    Handled := True;
+    if CurrentEditFile.SynEditor.Focused then
+    begin
+      actnReduceFont.Execute;
+      Handled := True;
+    end
+    else if CurrentEditFile.HTMLViewer.Focused then
+    begin
+      acZoomOut.Execute;
+      Handled := True;
+    end;
   end;
 end;
 
 procedure TfrmMain.FormMouseWheelUp(Sender: TObject; Shift: TShiftState;
   MousePos: TPoint; var Handled: Boolean);
 begin
-  if Shift = [ssCtrl] then
+  if (Shift = [ssCtrl]) and (CurrentEditFile <> nil) then
   begin
-    actnEnlargeFont.Execute;
-    Handled := True;
+    if CurrentEditFile.SynEditor.Focused then
+    begin
+      actnEnlargeFont.Execute;
+      Handled := True;
+    end
+    else if CurrentEditFile.HTMLViewer.Focused then
+    begin
+      acZoomIn.Execute;
+      Handled := True;
+    end;
   end;
 end;
 
 procedure TfrmMain.FormResize(Sender: TObject);
 begin
   AdjustCompactWidth;
+  AdjustViewerWidth;
+end;
+
+function TfrmMain.GetMarkdownHelpFileName: TFileName;
+begin
+  //After deploy/install the Help folder is located into exe folder
+  Result := ExtractFilePath(Application.ExeName)+
+    '.\Help\MarkDown Support Test.md';
+  //In development environment the Help folder is located into ..\Help\ folter
+  if not FileExists(Result) then
+    Result := ExtractFilePath(Application.ExeName)+
+      '..\Help\MarkDown Support Test.md';
 end;
 
 procedure TfrmMain.ShowSRDialog(aReplace: boolean);
@@ -728,9 +888,11 @@ end;
 
 procedure TfrmMain.SplitterMoved(Sender: TObject);
 var
+  LChildForm: TMDIChildForm;
   LEditingFile: TEditingFile;
 begin
-  LEditingFile := TEditingFile(TSplitter(Sender).Tag);
+  LChildForm := TSplitter(Sender).Owner as TMDIChildForm;
+  LEditingFile := TEditingFile(LChildForm.EditingFile);
   LEditingFile.ShowMarkDownAsHTML(FEditorSettings, True);
 end;
 
@@ -745,14 +907,6 @@ procedure TfrmMain.SVClosing(Sender: TObject);
 begin
   if SV.Opened then
     SV.OpenedWidth := SV.Width;
-end;
-
-procedure TfrmMain.SVGIconImageCloseButtonClick(Sender: TObject);
-begin
-  PanelCloseButton.Visible := False;
-  PageControl.ActivePageIndex := PanelCloseButton.Tag;
-  acClose.Execute;
-  ShowTabCloseButtonOnHotTab;
 end;
 
 procedure TfrmMain.SVOpened(Sender: TObject);
@@ -842,6 +996,11 @@ begin
   ShowSRDialog(false);
 end;
 
+procedure TfrmMain.acRefreshExecute(Sender: TObject);
+begin
+  UpdateMDViewer(True);
+end;
+
 procedure TfrmMain.acReplaceExecute(Sender: TObject);
 begin
   ShowSRDialog(true);
@@ -885,6 +1044,7 @@ var
   LFileName: string;
   LIndex: Integer;
   LCurrentFileName: string;
+  EditingFile: TEditingFile;
 begin
   LIndex := -1;
   for I := 0 to FEditorSettings.OpenedFileList.Count-1 do
@@ -895,7 +1055,10 @@ begin
       LIndex := I;
   end;
   if LIndex <> -1 then
-    PageControl.ActivePageIndex := LIndex;
+  begin
+    EditingFile := TEditingFile(EditFileList.Items[LIndex]);
+    EditingFile.ChildForm.Show;
+  end;
   UpdateMDViewer(True);
 end;
 
@@ -914,6 +1077,29 @@ var
   FileVersionStr: string;
   LMarkDownMasks: string;
 begin
+  FormTabsBar := TSpecialFormTabsBar.CreateForMainForm(Self, ClientPanel);
+
+  //To check Application Focus
+  Application.OnActivate := AppActivate;
+  Application.OnDeactivate := AppDeactivate;
+
+  //Add Toolbar Shortcuts
+  //Ctrl+Shift+Up/Down arrows
+  acSuperscript.ShortCut := ShortCut(VK_UP, [ssCtrl, ssShift]);
+  acSubscript.ShortCut := ShortCut(VK_DOWN, [ssCtrl, ssShift]);
+  //Ctrl+Key number on the numeric keypad
+  acHeader1.ShortCut := ShortCut(VK_NUMPAD1, [ssCtrl]);
+  acHeader2.ShortCut := ShortCut(VK_NUMPAD2, [ssCtrl]);
+  acHeader3.ShortCut := ShortCut(VK_NUMPAD3, [ssCtrl]);
+  //Ctrl+Key number above the keyboard letters
+  acHeader1.SecondaryShortCuts.Add('Ctrl+1');
+  acHeader2.SecondaryShortCuts.Add('Ctrl+2');
+  acHeader3.SecondaryShortCuts.Add('Ctrl+3');
+
+  //Initialize AnimatedTaskDialog font size and use of CommandLinks
+  Screen.MessageFont.Size := Round(Screen.MessageFont.Size*1.2);
+  InitializeStyledTaskDialogs(True, Screen.MessageFont, True);
+
   LMarkDownMasks := GetFileMasks(AMarkDownFileExt);
   OpenDialog.Filter :=
     Format('%s (%s)|%s', [MARKDOWN_FILES, LMarkDownMasks, LMarkDownMasks]);
@@ -923,8 +1109,11 @@ begin
   FEditorOptions := TSynEditorOptionsContainer.create(self);
   FEditorSettings := TEditorSettings.CreateSettings(nil, FEditorOptions);
   dmResources.Settings := FEditorSettings;
+
+  {$IFNDEF NO_VCL_STYLES}
   if not IsStyleHookRegistered(TCustomSynEdit, TScrollingStyleHook) then
     TStyleManager.Engine.RegisterStyleHook(TCustomSynEdit, TScrollingStyleHook);
+  {$ENDIF}
 
   if (Trim(FEditorSettings.StyleName) <> '') and not SameText('Windows', FEditorSettings.StyleName) then
     TStyleManager.TrySetStyle(FEditorSettings.StyleName, False);
@@ -956,14 +1145,22 @@ end;
 
 procedure TfrmMain.acNewFileExecute(Sender: TObject);
 var
-  NewExt : string;
-  EditingFile : TEditingFile;
+  NewExt, LNewFileName: string;
+  EditingFile: TEditingFile;
+  LCount: Integer;
 begin
   NewExt := 'md';
 
   //Create object to manage new file
-  EditingFile := TEditingFile.Create(CurrentDir+'New.'+NewExt,
-    FEditorSettings.UseDarkStyle);
+  LCount := 0;
+  LNewFileName := Format('%s%s.%s', [CurrentDir,'New',NewExt]);
+  while FileExists(LNewFileName) do
+  begin
+    Inc(LCount);
+    LNewFileName := Format('%s%s(%d).%s', [CurrentDir,'New',LCount,NewExt]);
+  end;
+
+  EditingFile := TEditingFile.Create(LNewFileName, FEditorSettings);
   Try
     AddEditingFile(EditingFile);
     if EditingFile.SynEditor.CanFocus then
@@ -979,6 +1176,16 @@ begin
   acSearch.Enabled := (CurrentEditor <> nil) and (CurrentEditor.Text <> '');
 end;
 
+procedure TfrmMain.acToolbarUpdate(Sender: TObject);
+var
+  LAction: TAction;
+begin
+  LAction := Sender as TAction;
+  LAction.Enabled := (CurrentEditFile <> nil) and
+    (CurrentEditFile.SynEditor.Focused) and
+    not (CurrentEditFile.SynEditor.SelectionMode = TSynSelectionMode.smColumn);
+end;
+
 procedure TfrmMain.acReplaceUpdate(Sender: TObject);
 begin
   acReplace.Enabled := (CurrentEditor <> nil) and (CurrentEditor.Text <> '')
@@ -988,7 +1195,7 @@ end;
 procedure TfrmMain.acCloseExecute(Sender: TObject);
 begin
   //Remove editing file
-  RemoveEditingFile(CurrentEditFile);
+  CurrentChildForm.Close;
 end;
 
 procedure TfrmMain.acEditCopyExecute(Sender: TObject);
@@ -1028,6 +1235,234 @@ begin
   acEditUndo.Enabled := (CurrentEditor <> nil) and CurrentEditor.Modified;
 end;
 
+procedure TfrmMain.InsertMDCommand(const ACommand: string);
+var
+  LSynEdit: TSynEdit;
+  LSelectedText: string;
+begin
+  LSynEdit := CurrentEditFile.SynEditor;
+  LSelectedText := LSynEdit.SelText;
+  //If there is no selected text
+  if LSelectedText = '' then
+  begin
+    LSynEdit.SelText := ACommand;
+  end
+  //If there is selected text
+  else
+  begin
+    //Replace list commands keeping indentation
+    if (ACommand = '1. ') or (ACommand = '* ') then
+    begin
+      LSelectedText := TRegEx.Replace(LSelectedText,
+        '(^[\t ]*)(### |## |# |\* |- |\d+\. |> )*((?![\t ]*[*]{3,}|[\t ]*[-]{3,}).+)',
+        '$1'+ACommand+'$3', [roMultiLine]);
+    end
+    //Remove other commands if is not the "---" command
+    else if not ACommand.StartsWith('---') then
+    begin
+      //Remove ordered list commands from the selected text
+      LSelectedText := TRegEx.Replace(LSelectedText, '\d+\. ', '', [roMultiLine]);
+      //Remove any other "not contains" commands
+      LSelectedText := TRegEx.Replace(LSelectedText,
+        '(^[\t ]*)(### |## |# |\* |- |> )?', '', [roMultiLine]);
+      //Add the command to all lines with content except lines with the
+      //commands "---" and "***" at the begining
+      LSelectedText := TRegEx.Replace(LSelectedText,
+        '^(?![\t ]*[*]{3,}|[\t ]*[-]{3,}).+$', ACommand+'$0', [roMultiLine]);
+    end
+    else
+      //Add the command to all lines with content except lines with the
+      //commands "---" and "***" at the end
+      LSelectedText := TRegEx.Replace(LSelectedText,
+        '^(?![\t ]*[-]{3,}|[\t ]*[*]{3,}).+$', '$0'+sLineBreak+ACommand, [roMultiLine]);
+    //Write elaborated text back to the document
+    LSynEdit.SelText := LSelectedText;
+  end;
+end;
+
+procedure TfrmMain.InsertMDCommandContains(const ACommandOpen, ACommandClose: string);
+var
+  LSynEdit: TSynEdit;
+  LSelectedText: string;
+  LSize: Integer;
+  LCoord: TBufferCoord;
+begin
+  LSize := Length(ACommandClose);
+  LSynEdit := CurrentEditFile.SynEditor;
+  LSelectedText := LSynEdit.SelText;
+  //If there is no selected text, add the opening and closing commands and
+  //place the caret in the middle
+  if LSelectedText = '' then
+  begin
+    LSynEdit.SelText := ACommandOpen+ACommandClose;
+    //Move the editor caret inside the open and close comands
+    LCoord := LSynEdit.CaretXY;
+    LCoord.Char := LCoord.Char-LSize;
+    LSynEdit.SetCaretAndSelection(LCoord, LCoord, LCoord);
+  end
+  else
+    //Insert three backticks (```) when the selected text has multiple rows in
+    //order to preserve the indentation
+    if (ACommandOpen = '`') and (Pos(sLineBreak,LSelectedText)>0) then
+      LSynEdit.SelText := '```'+sLineBreak+LSelectedText+sLineBreak+'```'
+    else
+      //Insert the open and close command in each row, except in the empty rows
+      //or the rows with line commands '---' or '***'
+      LSynEdit.SelText := TRegEx.Replace(LSelectedText,
+      '(^)((?![\t ]*[-]{3,}|[\t ]*[*]{3,}).+$)',
+      '$1'+ACommandOpen+'$2'+ACommandClose, [roMultiLine]);
+end;
+
+procedure TfrmMain.InputUrl(const APrefix: string; AType: TInputType);
+var
+  LSynEdit: TSynEdit;
+  LSelectedText: string;
+begin
+  LSynEdit := CurrentEditFile.SynEditor;
+  LSelectedText := LSynEdit.SelText;
+
+  if InputUrlDialog(Self, CurrentEditFile.ServerRoot,
+    APrefix, AType, LSelectedText) = mrOk then
+    LSynEdit.SelText := LSelectedText;
+end;
+
+procedure TfrmMain.acHeader1Execute(Sender: TObject);
+begin
+  InsertMDCommand('# ');
+end;
+
+procedure TfrmMain.acHeader2Execute(Sender: TObject);
+begin
+  InsertMDCommand('## ');
+end;
+
+procedure TfrmMain.acHeader3Execute(Sender: TObject);
+begin
+  InsertMDCommand('### ');
+end;
+
+procedure TfrmMain.acLinkExecute(Sender: TObject);
+begin
+  InputUrl('[', itLink);
+end;
+
+procedure TfrmMain.acImageExecute(Sender: TObject);
+begin
+  InputUrl('![', itImage);
+end;
+
+procedure TfrmMain.acTableExecute(Sender: TObject);
+var
+  LdlgTable: TdlgCreateTable;
+  LSynEdit: TSynEdit;
+begin
+  LdlgTable := TdlgCreateTable.Create(self);
+  LSynEdit := CurrentEditFile.SynEditor;
+  try
+    LdlgTable.ShowModal();
+    if LdlgTable.ModalResult = mrOk then
+      LSynEdit.SelText := LdlgTable.ATableText;
+  finally
+    LdlgTable.Free();
+  end;
+end;
+
+procedure TfrmMain.acBoldExecute(Sender: TObject);
+begin
+  InsertMDCommandContains('**', '**');
+end;
+
+procedure TfrmMain.acItalicExecute(Sender: TObject);
+begin
+  InsertMDCommandContains('_', '_');
+end;
+
+procedure TfrmMain.acStrikeExecute(Sender: TObject);
+begin
+  InsertMDCommandContains('~~', '~~');
+end;
+
+procedure TfrmMain.acUnderlineExecute(Sender: TObject);
+begin
+  InsertMDCommandContains('++', '++');
+end;
+
+procedure TfrmMain.acCodeExecute(Sender: TObject);
+begin
+  InsertMDCommandContains('`', '`');
+end;
+
+procedure TfrmMain.acMarkerExecute(Sender: TObject);
+begin
+  InsertMDCommandContains('==', '==');
+end;
+
+procedure TfrmMain.acSubscriptExecute(Sender: TObject);
+begin
+  InsertMDCommandContains('<sub>', '</sub>');
+end;
+
+procedure TfrmMain.acSuperscriptExecute(Sender: TObject);
+begin
+  InsertMDCommandContains('<sup>', '</sup>');
+end;
+
+procedure TfrmMain.acUnorderedListExecute(Sender: TObject);
+begin
+  InsertMDCommand('* ');
+end;
+
+procedure TfrmMain.acOrderedListExecute(Sender: TObject);
+begin
+  InsertMDCommand('1. ');
+end;
+
+procedure TfrmMain.acBlockquoteExecute(Sender: TObject);
+begin
+  InsertMDCommand('> ');
+end;
+
+procedure TfrmMain.acHorizontalRuleExecute(Sender: TObject);
+begin
+  InsertMDCommand('---'+sLineBreak);
+end;
+
+procedure TfrmMain.acHTMLViewerUpdate(Sender: TObject);
+begin
+  (Sender as TAction).Enabled :=
+    (CurrentEditFile <> nil) and (CurrentEditFile.HTMLViewer <> nil);
+end;
+
+procedure TfrmMain.acHelpExecute(Sender: TObject);
+var
+  LHelpFileName: TFileName;
+begin
+  LHelpFileName := GetMarkdownHelpFileName;
+  if OpenFile(LHelpFileName) then
+    UpdateMDViewer(True);
+end;
+
+procedure TfrmMain.acHelpUpdate(Sender: TObject);
+var
+  LHelpFileName: TFileName;
+begin
+  LHelpFileName := GetMarkdownHelpFileName;
+  acHelp.Visible := FileExists(LHelpFileName);
+end;
+
+procedure TfrmMain.UpdateChildFormImage(AChildForm: TMDIChildForm;
+  AModified: Boolean; const AImageName: string);
+var
+  LImageName: string;
+begin
+  if AModified then
+    LImageName := AImageName
+  else
+    LImageName := AImageName+'-gray';
+  AChildForm.SetIconByName(VirtualImageList20, LImageName);
+  FormTabsBar.Invalidate;
+end;
+
 procedure TfrmMain.SynEditChange(Sender: TObject);
 begin
   if Sender = CurrentEditor then
@@ -1046,60 +1481,55 @@ end;
 
 function TfrmMain.AddEditingFile(const EditingFile: TEditingFile): Integer;
 var
-  LTabSheet: TTabSheet;
+  LChildForm: TMDIChildForm;
   LEditor: TSynEdit;
   LFEViewer: THtmlViewer;
   LSplitter: TSplitter;
 begin
   //Add file to opened-list
   Result := EditFileList.Add(EditingFile);
-  //Create the Tabsheet page associated to the file
-  LTabSheet := nil;
+  //Create the Child Form associated to the file
+  LChildForm := nil;
   LEditor := nil;
   LFEViewer := nil;
   Try
-    LTabSheet := TTabSheet.Create(self);
-    LTabSheet.PageControl := PageControl;
-    //Use TAG of tabsheet to store the object pointer
-    LTabSheet.Tag := NativeInt(Pointer(EditingFile));
-    LTabSheet.Caption := EditingFile.Name;
-    LTabSheet.Hint := EditingFile.FileName;
-    LTabSheet.Imagename := EditingFile.ImageName+'-gray';
-    LTabSheet.Parent := PageControl;
-    LTabSheet.TabVisible := True;
-    EditingFile.TabSheet := LTabSheet;
+    LChildForm := TMDIChildForm.Create(Application);
+    LChildForm.OnClose := ChildFormClose;
+    LChildForm.EditingFile := EditingFile;
+    LChildForm.OnActivate := ChildFormActivate;
+    UpdateChildFormImage(LChildForm, False, EditingFile.ImageName);
+    EditingFile.ChildForm := LChildForm;
 
-    LFEViewer := THtmlViewer.Create(nil);
+    LFEViewer := THtmlViewer.Create(LChildForm);
     LFEViewer.ScrollBars := ssNone;
     LFEViewer.Align := alRight;
-    LFEViewer.Width := LTabSheet.Width div 2;
-    LFEViewer.Parent := LTabSheet;
+    LFEViewer.Width := LChildForm.Width div 2;
+    LFEViewer.Parent := LChildForm;
     LFEViewer.PopupMenu := PopHTMLViewer;
     LFEViewer.DefBackground := StyleServices.GetSystemColor(clWindow);
     LFEViewer.OnHotSpotClick := HtmlViewerHotSpotClick;
     LFEViewer.OnImageRequest := dmResources.HtmlViewerImageRequest;
     LFEViewer.ScrollBars := TScrollStyle.ssVertical;
 
-    LSplitter := TSplitter.Create(LTabSheet);
+    LSplitter := TSplitter.Create(LChildForm);
     LSplitter.Align := alRight;
     LSplitter.Left := LFEViewer.Left-1;
     LSplitter.AutoSnap := False;
     LSplitter.Width := 6;
-    LSplitter.Parent := LTabSheet;
+    LSplitter.Parent := LChildForm;
     LSplitter.Beveled := True;
     LSplitter.OnMoved := SplitterMoved;
-    LSplitter.Tag := NativeInt(EditingFile);
 
     EditingFile.Splitter := LSplitter;
     EditingFile.HTMLViewer := LFEViewer;
 
-    //Create the SynEdit object editor into the TabSheet that is the owner
-    LEditor := TSynEdit.Create(LTabSheet);
+    //Create the SynEdit object editor into the ChildForm that is the owner
+    LEditor := TSynEdit.Create(LChildForm);
     LEditor.OnChange := SynEditChange;
     LEditor.OnEnter := SynEditEnter;
     LEditor.MaxUndo := 5000;
     LEditor.Align := alClient;
-    LEditor.Parent := LTabSheet;
+    LEditor.Parent := LChildForm;
     LEditor.SearchEngine := SynEditSearch;
     LEditor.PopupMenu := popEditor;
 
@@ -1112,34 +1542,27 @@ begin
 
     LEditor.Visible := True;
 
-    //Show the tabsheet
-    LTabSheet.Visible := True;
+    //Make the ChildForm the current page
+    //and call "change" method passing EditingChild
+    ChildFormActivate(LChildForm);
   Except
-    LTabSheet.Free;
+    LChildForm.Free;
     LEditor.Free;
     LFEViewer.Free;
     raise;
   End;
-
-    //Make the Tabsheet the current page
-  PageControl.ActivePage := LTabSheet;
-
-    //and call "change" of pagecontrol
-  PageControl.OnChange(PageControl);
 end;
 
 procedure TfrmMain.UpdateMDViewer(const AReloadImages: Boolean);
 begin
   if FProcessingFiles then
     Exit;
-  if (CurrentEditor <> nil) then
+  if (CurrentEditor <> nil) and (CurrentEditFile <> nil) then
   begin
     Screen.Cursor := crHourGlass;
     try
-      if CurrentEditor.Modified then
-        pageControl.ActivePage.Imagename := CurrentEditFile.ImageName
-      else
-        pageControl.ActivePage.Imagename := CurrentEditFile.ImageName+'-gray';
+      UpdateChildFormImage(CurrentChildForm, CurrentEditor.Modified,
+        CurrentEditFile.ImageName);
 
       StatusBar.Panels[STATUSBAR_MESSAGE].Text := CurrentEditFile.FileName;
 
@@ -1151,53 +1574,28 @@ begin
   end;
 end;
 
-procedure TfrmMain.PageControlChange(Sender: TObject);
+procedure TfrmMain.ChildFormClose(Sender: TObject; var Action: TCloseAction);
 begin
+  //Remove editing file
+  var LEditingFile := (Sender as TMDIChildForm).EditingFile as TEditingFile;
+  RemoveEditingFile(LEditingFile);
+  //Reset CurrentChildForm pointer
+  CurrentChildForm := nil;
+  Action := caFree;
+end;
+
+procedure TfrmMain.ChildFormActivate(Sender: TObject);
+begin
+  CurrentChildForm := Sender as TMDIChildForm;
   CloseSplitViewMenu;
   //Setting the Editor caption as the actual file opened
   if CurrentEditFile <> nil then
   begin
-    Caption := Application.Title+' - '+CurrentEditFile.FileName;
-    FMDFile := CurrentEditFile;
+    if (CurrentEditFile.SynEditor.CanFocus) then
+      CurrentEditFile.SynEditor.SetFocus;
   end;
   UpdateMDViewer(False);
-end;
-
-procedure TfrmMain.PageControlMouseMove(Sender: TObject; Shift: TShiftState; X,
-  Y: Integer);
-{$WRITEABLECONST ON}
-const oldPos : integer = -2;
-{$WRITEABLECONST OFF}
-var
-  iot : integer;
-
-  LhintPause: Integer;
-  LTabIndex: Integer;
-begin
-  inherited;
-  LTabIndex := PageControl.IndexOfTabAt(X, Y);
-  if (LTabIndex >= 0) and (PageControl.Hint <> PageControl.Pages[LTabIndex].Hint) then
-  begin
-    LHintPause := Application.HintPause;
-    try
-      if PageControl.Hint <> '' then
-        Application.HintPause := 0;
-      Application.CancelHint;
-      PageControl.Hint := PageControl.Pages[LTabIndex].Hint;
-      PageControl.ShowHint := true;
-      Application.ProcessMessages; // force hint to appear
-    finally
-      Application.HintPause := LHintPause;
-    end;
-  end;
-
-  iot := TTabControl(Sender).IndexOfTabAt(x,y);
-  if (iot > -1) then
-  begin
-    if iot <> oldPos then
-      ShowTabCloseButtonOnHotTab;
-  end;
-  oldPos := iot;
+  AdjustViewerWidth;
 end;
 
 procedure TfrmMain.ProcessorDialectComboBoxSelect(Sender: TObject);
@@ -1218,6 +1616,38 @@ begin
   acSave.Enabled := (CurrentEditor <> nil) and (CurrentEditor.Modified);
 end;
 
+procedure TfrmMain.CheckFileChangedTimerTimer(Sender: TObject);
+var
+  LFileAge: TDateTime;
+begin
+  CheckFileChangedTimer.Enabled := False;
+  Try
+    //Check if opened files are changed on Disk
+    for var I := 0 to EditFileList.Count -1 do
+    begin
+      var LEditFile := TEditingFile(EditFileList.items[I]);
+      if FileAge(LEditFile.FileName, LFileAge) then
+      begin
+        if LFileAge <> LEditFile.FFileAge then
+        begin
+          var LConfirm := StyledMessageDlg(Format(FILE_CHANGED_RELOAD,[LEditFile.FileName]),
+            mtWarning, [mbYes, mbNo], 0);
+          if LConfirm = mrYes then
+          begin
+            LEditFile.ReadFromFile;
+            UpdateChildFormImage(LEditFile.ChildForm, False, LEditFile.ImageName);
+            SynEditChange(LEditFile.SynEditor);
+          end
+          else
+            LEditFile.FFileAge := LFileAge;
+        end;
+      end;
+    end;
+  Finally
+    CheckFileChangedTimer.Enabled := True;
+  End;
+end;
+
 procedure TfrmMain.CloseSplitViewMenu;
 begin
   SV.Close;
@@ -1232,8 +1662,8 @@ end;
 
 function TfrmMain.CurrentEditFile: TEditingFile;
 begin
-  if (PageControl.ActivePage <> nil) then
-    Result := TEditingFile(PageControl.ActivePage.Tag)
+  if (CurrentChildForm <> nil) then
+    Result := TEditingFile(CurrentChildForm.EditingFile)
   else
     Result := nil;
 end;
@@ -1252,7 +1682,7 @@ begin
   //Confirm save changes
   if EditingFile.SynEditor.Modified then
   begin
-    LConfirm := MessageDlg(Format(CONFIRM_CHANGES,[EditingFile.FileName]),
+    LConfirm := StyledMessageDlg(Format(CONFIRM_CHANGES,[EditingFile.FileName]),
       mtWarning, [mbYes, mbNo], 0);
     if LConfirm = mrYes then
       EditingFile.SaveToFile
@@ -1282,24 +1712,9 @@ begin
   //Confirm save changes
   ConfirmChanges(EditingFile);
 
-  PanelCloseButton.Visible := False;
-
-  //Rimuovo il riferimento
-  if FMDFile = EditingFile then
-    FMDFile := nil;
-
   //Delete the file from the Opened-List
+  CurrentChildForm := nil;
   EditFileList.Delete(pos);
-
-  //Delete the TabSheet
-  PageControl.Pages[pos].Free;
-
-  //Activate the previous page and call "change" of pagecontrol
-  if pos > 0 then
-    PageControl.ActivePageIndex := pos-1;
-
-  //Force "change" of Page
-  PageControl.OnChange(PageControl);
 end;
 
 procedure TfrmMain.acCloseAllUpdate(Sender: TObject);
@@ -1311,11 +1726,11 @@ procedure TfrmMain.acCloseAllExecute(Sender: TObject);
 begin
   FProcessingFiles := True;
   try
-    PanelCloseButton.Visible := False;
     while EditFileList.Count > 0 do
-      RemoveEditingFile(TEditingFile(EditFileList.items[0]));
+      TEditingFile(EditFileList.items[0]).ChildForm.Close;
   finally
     FProcessingFiles := False;
+    UpdateStatusBarPanels;
   end;
 end;
 
@@ -1447,7 +1862,7 @@ end;
 
 procedure TfrmMain.FileSavedAskToOpen(const AFileName: string);
 begin
-  if MessageDlg(Format(FILE_SAVED,[AFileName]),
+  if StyledMessageDlg(Format(FILE_SAVED,[AFileName]),
     TMsgDlgType.mtInformation, [mbYes, MbNo], 0) = mrYes then
   begin
     ShellExecute(handle, 'open', PChar(AFilename), nil, nil, SW_SHOWNORMAL);
@@ -1550,15 +1965,43 @@ begin
 end;
 
 procedure TfrmMain.UpdateFromSettings(AEditor: TSynEdit);
+var
+  LStyle: TStyledButtonDrawType;
 begin
   UpdateApplicationStyle(FEditorSettings.StyleName);
   if AEditor <> nil then
   begin
-  FEditorSettings.ReadSettings(AEditor.Highlighter, self.FEditorOptions);
+    FEditorSettings.ReadSettings(AEditor.Highlighter, self.FEditorOptions);
     AEditor.ReadOnly := False;
   end
   else
     FEditorSettings.ReadSettings(nil, self.FEditorOptions);
+
+  //Rounded Buttons for StyledButtons
+  if FEditorSettings.ButtonDrawRounded then
+    LStyle := btRounded
+  else
+    LStyle := btRoundRect;
+  TStyledButton.RegisterDefaultRenderingStyle(LStyle);
+
+  //Rounded Buttons for StyledToolbars
+  if FEditorSettings.ToolbarDrawRounded then
+    LStyle := btRounded
+  else
+    LStyle := btRoundRect;
+  TStyledToolbar.RegisterDefaultRenderingStyle(LStyle);
+  StyledToolbar.StyleDrawType := LStyle;
+  SettingsToolBar.StyleDrawType := LStyle;
+
+  //Rounded Buttons for menus: StyledCategories and StyledButtonGroup
+  if FEditorSettings.MenuDrawRounded then
+    LStyle := btRounded
+  else
+    LStyle := btRoundRect;
+  TStyledCategoryButtons.RegisterDefaultRenderingStyle(LStyle);
+  TStyledButtonGroup.RegisterDefaultRenderingStyle(LStyle);
+  catMenuItems.StyleDrawType := LStyle;
+  MenuButtonToolbar.StyleDrawType := LStyle;
 
   ProcessorDialectComboBox.ItemIndex := ord(FEditorSettings.ProcessorDialect);
 
@@ -1645,8 +2088,8 @@ begin
     end;
     CurrentEditFile.SaveToFile;
 
-    //call the "onchange" event of PageControl
-    PageControl.OnChange(PageControl);
+    //call the "onactivate" event of ChildForm
+    ChildFormActivate(CurrentEditFile.ChildForm);
   end;
 end;
 
@@ -1672,14 +2115,17 @@ begin
   for I := 0 to FEditorSettings.HistoryFileList.Count -1 do
   begin
     LFileName := FEditorSettings.HistoryFileList.Strings[I];
-    LMenuItem := TMenuItem.Create(nil);
-    if Length(LFileName) > 100 then
-      LMenuItem.Caption := Copy(LFileName,1,20)+'...'+RightStr(LFileName, 80)
-    else
-      LMenuItem.Caption := LFileName;
-    LMenuItem.Hint := LFileName;
-    LMenuItem.OnClick := HistoryListClick;
-    RecentPopupMenu.Items.Add(LMenuItem);
+    if FileExists(LFileName) then
+    begin
+      LMenuItem := TMenuItem.Create(nil);
+      if Length(LFileName) > 100 then
+        LMenuItem.Caption := Copy(LFileName,1,20)+'...'+RightStr(LFileName, 80)
+      else
+        LMenuItem.Caption := LFileName;
+      LMenuItem.Hint := LFileName;
+      LMenuItem.OnClick := HistoryListClick;
+      RecentPopupMenu.Items.Add(LMenuItem);
+    end;
   end;
 end;
 
@@ -1714,6 +2160,7 @@ begin
     StatusBar.Panels[STATUSBAR_PANEL_CARET].Text := '';
     StatusBar.Panels[STATUSBAR_PANEL_MODIFIED].Text := '';
     StatusBar.Panels[STATUSBAR_PANEL_STATE].Text := '';
+    StatusBar.Panels[STATUSBAR_MESSAGE].Text := '';
   end;
 end;
 
@@ -1754,13 +2201,14 @@ end;
 procedure TfrmMain.ActionListUpdate(Action: TBasicAction;
   var Handled: Boolean);
 var
-  InitialDir : string;
-  LFileName: string;
+  InitialDir: string;
+  LFileName: TFileName;
 begin
   UpdateStatusBarPanels;
   if not FirstAction then
   begin
     FirstAction := True;
+
     //Load previous opened-files
     LoadOpenedFiles;
 
@@ -1768,7 +2216,6 @@ begin
     LFileName := ParamStr(1);
     if LFileName <> '' then
     begin
-      TLogPreview.Add(Format('ParamStr(1): %s', [LFileName]));
       //Load file passed at command line
       InitialDir := ExtractFilePath(LFileName);
       OpenFile(LFileName);
@@ -1838,6 +2285,19 @@ begin
   FEditorSettings.HistoryFileList.Insert(0, AFileName);
 end;
 
+procedure TfrmMain.AdjustViewerWidth;
+begin
+  if CurrentEditFile <> nil then
+  begin
+    var LViewerWidth := CurrentEditFile.HTMLViewer.Width;
+    var LMinWidth := Self.Width div 6;
+    if LViewerWidth < LMinWidth then
+      CurrentEditFile.HTMLViewer.Width := LMinWidth
+    else if LViewerWidth > Self.Width - LMinWidth then
+      CurrentEditFile.HTMLViewer.Width := Self.Width - LMinWidth;
+  end;
+end;
+
 procedure TfrmMain.AdjustCompactWidth;
 begin
   //Change size of compact because Scrollbars appears
@@ -1845,7 +2305,7 @@ begin
     SV.CompactWidth := Round(44 * ScaleFactor)
   else
     SV.CompactWidth := Round(66 * ScaleFactor);
-  if (CurrentEditFile <> nil) and (CurrentEditFile.HTMLViewer <> nil) and (CurrentEditFile.HTMLViewer.Width > CurrentEditFile.TabSheet.Width) then
+  if (CurrentEditFile <> nil) and (CurrentEditFile.HTMLViewer <> nil) and (CurrentEditFile.HTMLViewer.Width > CurrentEditFile.ChildForm.Width) then
     CurrentEditFile.HTMLViewer.Width := width div 3;
 end;
 
@@ -2002,43 +2462,24 @@ begin
   end;
 end;
 
-procedure TfrmMain.ShowTabCloseButtonOnHotTab;
-var
-  iot : integer;
-  cp : TPoint;
-  rectOver: TRect;
+procedure TfrmMain.ManageExceptions(Sender: TObject; E: Exception);
 begin
-  cp := PageControl.ScreenToClient(Mouse.CursorPos);
-  iot := PageControl.IndexOfTabAt(cp.X, cp.Y);
-
-  if iot > -1 then
+  //This is an event-handler for exceptions that replace Delphi standard handler
+  if E is EAccessViolation then
   begin
-    rectOver := PageControl.TabRect(iot);
-
-    PanelCloseButton.Left := rectOver.Right - PanelCloseButton.Width;
-    PanelCloseButton.Top := rectOver.Top + ((rectOver.Height div 2) - (PanelCloseButton.Height div 2)) + 1;
-
-    PanelCloseButton.Tag := iot;
-    PanelCloseButton.Show;
+    if StyledTaskMessageDlg(STR_UNEXPECTED_ERROR,
+      Format('Unexpected Error: %s%s',[sLineBreak,E.Message]),
+      TMsgDlgType.mtError,
+      [TMsgDlgBtn.mbOK, TMsgDlgBtn.mbAbort], 0) = mrAbort then
+    Application.Terminate;
   end
   else
   begin
-    PanelCloseButton.Tag := -1;
-    PanelCloseButton.Hide;
-  end;
-end;
 
-procedure TfrmMain.PageControlMouseEnter(Sender: TObject);
-begin
-  ShowTabCloseButtonOnHotTab;
-end;
-
-procedure TfrmMain.PageControlMouseLeave(Sender: TObject);
-begin
-  if PanelCloseButton <> FindVCLWindow(Mouse.CursorPos) then
-  begin
-    PanelCloseButton.Hide;
-    PanelCloseButton.Tag := -1;
+    StyledTaskMessageDlg(STR_ERROR,
+      Format('Error: %s%s',[sLineBreak,E.Message]),
+      TMsgDlgType.mtError,
+      [TMsgDlgBtn.mbOK, TMsgDlgBtn.mbHelp], 0);
   end;
 end;
 
@@ -2048,4 +2489,3 @@ initialization
   {$ENDIF}
 
 end.
-

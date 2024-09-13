@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021-2023 (Ethea S.r.l.)                                 }
+{       Copyright (c) 2021-2024 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -53,7 +53,6 @@ type
     procedure UpdateRegistry(Register: Boolean); override;
     property TThumbnailHandlerClass: TThumbnailHandlerClass read FTThumbnailHandlerClass;
   end;
-
 
 implementation
 
@@ -153,7 +152,19 @@ var
   procedure RegisterExtension(const AExtension: string);
   begin
     LRegKey := RootPrefix + AExtension + '\shellex\' + ThumbnailProviderGUID;
-    CreateRegKey(LRegKey, '', sClassID, RootKey);
+    try
+      CreateRegKey(LRegKey, '', sClassID, RootKey);
+    except
+    end;
+  end;
+
+  procedure DeleteExtension(const AExtension: string);
+  begin
+    LRegKey := RootPrefix + AExtension + '\shellex\' + ThumbnailProviderGUID;
+    try
+      DeleteRegKey(LRegKey, RootKey);
+    except
+    end;
   end;
 begin
 
@@ -171,7 +182,7 @@ begin
     inherited UpdateRegistry(True);
     LRegKey := Format('%sCLSID\%s',[RootPrefix, sClassID]);
     CreateRegKey(LRegKey, 'AppID', sAppID, RootKey);
-    CreateRegKey(LRegKey, 'DisplayName', 'Delphi Markdown Thumbnail Provider', RootKey);
+    CreateRegKey(LRegKey, 'DisplayName', 'Ethea''s Markdown Thumbnail Provider', RootKey);
     //CreateRegKeyDWORD(LRegKey, 'DisableLowILProcessIsolation', 1, RootKey);
 
     if ProgID <> '' then
@@ -181,7 +192,6 @@ begin
       //Register for supported files ('.md','.mkd','.mdwn','.mdown','.mdtxt','.mdtext','.markdown')
       for LExtension in AMarkDownFileExt do
         RegisterExtension(LExtension);
-
       CreateRegKey(sComServerKey, 'VersionIndependentProgID', ProgID, RootKey);
       LRegKey := RootPrefix + ProgID + '\shellex\' + ThumbnailProviderGUID;
       CreateRegKey(LRegKey, '', sClassID, RootKey);
@@ -196,7 +206,8 @@ begin
       DeleteRegValue(LRegKey, 'DllSurrogate', RootKey);
       DeleteRegValue(LRegKey, 'DisableLowILProcessIsolation', RootKey);
       //Delete extension for xml
-      DeleteRegKey(RootPrefix + '.md' + '\shellex\' + ThumbnailProviderGUID, RootKey);
+      for LExtension in AMarkDownFileExt do
+        DeleteExtension(LExtension);
     end;
     inherited UpdateRegistry(False);
   end;

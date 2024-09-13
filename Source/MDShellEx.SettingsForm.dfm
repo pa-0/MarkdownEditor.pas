@@ -3,8 +3,8 @@ object SVGSettingsForm: TSVGSettingsForm
   Top = 148
   BorderIcons = [biSystemMenu]
   BorderStyle = bsSingle
-  ClientHeight = 511
-  ClientWidth = 815
+  ClientHeight = 510
+  ClientWidth = 811
   Color = clBtnFace
   Constraints.MinHeight = 480
   Constraints.MinWidth = 600
@@ -18,7 +18,6 @@ object SVGSettingsForm: TSVGSettingsForm
   ShowHint = True
   OnCreate = FormCreate
   OnDestroy = FormDestroy
-  PixelsPerInch = 96
   TextHeight = 15
   object TLabel
     Left = 4
@@ -90,6 +89,39 @@ object SVGSettingsForm: TSVGSettingsForm
             'CommonMark')
         end
       end
+      object RoundedButtonsGroupBox: TGroupBox
+        AlignWithMargins = True
+        Left = 10
+        Top = 208
+        Width = 238
+        Height = 97
+        Caption = 'Rounded Buttons'
+        TabOrder = 2
+        object ToolbarRoundedCheckBox: TCheckBox
+          Left = 15
+          Top = 24
+          Width = 185
+          Height = 17
+          Caption = 'Apply to Toolbars'
+          TabOrder = 0
+        end
+        object ButtonsRoundedCheckBox: TCheckBox
+          Left = 15
+          Top = 47
+          Width = 185
+          Height = 17
+          Caption = 'Apply to Buttons'
+          TabOrder = 1
+        end
+        object MenuRoundedCheckBox: TCheckBox
+          Left = 15
+          Top = 70
+          Width = 185
+          Height = 17
+          Caption = 'Apply to Menu Buttons'
+          TabOrder = 2
+        end
+      end
     end
     object stTheme: TTabSheet
       Caption = 'Theme'
@@ -99,7 +131,7 @@ object SVGSettingsForm: TSVGSettingsForm
         Left = 0
         Top = 0
         Width = 185
-        Height = 402
+        Height = 401
         Align = alLeft
         BevelOuter = bvNone
         TabOrder = 0
@@ -122,7 +154,7 @@ object SVGSettingsForm: TSVGSettingsForm
           Left = 0
           Top = 118
           Width = 185
-          Height = 284
+          Height = 283
           Align = alClient
           Caption = 'Selected Theme'
           TabOrder = 1
@@ -132,8 +164,8 @@ object SVGSettingsForm: TSVGSettingsForm
       object ThemeClientPanel: TPanel
         Left = 185
         Top = 0
-        Width = 469
-        Height = 402
+        Width = 465
+        Height = 401
         Align = alClient
         BevelOuter = bvNone
         TabOrder = 1
@@ -266,7 +298,7 @@ object SVGSettingsForm: TSVGSettingsForm
         Left = 193
         Top = 0
         Width = 4
-        Height = 402
+        Height = 401
         MinSize = 100
         ExplicitLeft = 143
         ExplicitHeight = 366
@@ -275,7 +307,7 @@ object SVGSettingsForm: TSVGSettingsForm
         Left = 0
         Top = 0
         Width = 193
-        Height = 402
+        Height = 401
         Align = alLeft
         BevelOuter = bvNone
         TabOrder = 0
@@ -283,7 +315,7 @@ object SVGSettingsForm: TSVGSettingsForm
           Left = 0
           Top = 0
           Width = 193
-          Height = 244
+          Height = 243
           Align = alClient
           BevelOuter = bvLowered
           TabOrder = 0
@@ -291,7 +323,7 @@ object SVGSettingsForm: TSVGSettingsForm
             Left = 1
             Top = 17
             Width = 191
-            Height = 226
+            Height = 225
             Align = alClient
             BevelOuter = bvNone
             ItemHeight = 15
@@ -311,7 +343,7 @@ object SVGSettingsForm: TSVGSettingsForm
         end
         object ElementColorGroupBox: TGroupBox
           Left = 0
-          Top = 244
+          Top = 243
           Width = 193
           Height = 116
           Align = alBottom
@@ -361,7 +393,7 @@ object SVGSettingsForm: TSVGSettingsForm
         end
         object ResetPanel: TPanel
           Left = 0
-          Top = 360
+          Top = 359
           Width = 193
           Height = 42
           Align = alBottom
@@ -369,7 +401,7 @@ object SVGSettingsForm: TSVGSettingsForm
           DesignSize = (
             193
             42)
-          object ResetButton: TButton
+          object ResetButton: TStyledButton
             Left = 9
             Top = 6
             Width = 174
@@ -384,15 +416,15 @@ object SVGSettingsForm: TSVGSettingsForm
       object paAttributesContainer: TPanel
         Left = 197
         Top = 0
-        Width = 457
-        Height = 402
+        Width = 453
+        Height = 401
         Align = alClient
         BevelOuter = bvNone
         TabOrder = 1
         object paAttributes: TPanel
           Left = 0
           Top = 0
-          Width = 457
+          Width = 453
           Height = 65
           Align = alTop
           BevelOuter = bvLowered
@@ -477,8 +509,8 @@ object SVGSettingsForm: TSVGSettingsForm
         object SynEdit: TSynEdit
           Left = 0
           Top = 65
-          Width = 457
-          Height = 337
+          Width = 453
+          Height = 336
           Align = alClient
           Font.Charset = DEFAULT_CHARSET
           Font.Color = clWindowText
@@ -553,6 +585,7 @@ object SVGSettingsForm: TSVGSettingsForm
         AutoSize = False
         ImageList = OrientationImageList
         ImageIndex = 0
+        ImageName = 'portrait'
       end
       object OrientationRadioGroup: TRadioGroup
         Left = 16
@@ -635,7 +668,7 @@ object SVGSettingsForm: TSVGSettingsForm
     SimplePanel = True
     UseSystemFont = False
   end
-  object MenuButtonGroup: TButtonGroup
+  object MenuButtonGroup: TStyledButtonGroup
     Left = 0
     Top = 41
     Width = 153
@@ -819,7 +852,7 @@ object SVGSettingsForm: TSVGSettingsForm
           '65v12.5c0,1.4,1.1,2.5,2.5,2.5H90V80z"/>'#13#10'</svg>'#13#10
       end>
     Scaled = True
-    Left = 356
-    Top = 336
+    Left = 384
+    Top = 420
   end
 end

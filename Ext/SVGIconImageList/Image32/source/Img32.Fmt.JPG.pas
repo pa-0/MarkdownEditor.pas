@@ -3,7 +3,7 @@ unit Img32.Fmt.JPG;
 (*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  4.4                                                             *
-* Date      :  30 January 2023                                               *
+* Date      :  12 March 2023                                                   *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2019-2023                                         *
 * Purpose   :  JPG/JPEG file format extension for TImage32                     *
@@ -24,7 +24,9 @@ type
     class function IsValidImageStream(stream: TStream): Boolean; override;
     function LoadFromStream(stream: TStream;
       img32: TImage32; imgIndex: integer = 0): Boolean; override;
-    procedure SaveToStream(stream: TStream; img32: TImage32); override;
+    //SaveToStream: compressionQuality (range: 0-100%)
+    procedure SaveToStream(stream: TStream;
+      img32: TImage32; compressionQlty: integer = -1); override;
     class function CopyToClipboard(img32: TImage32): Boolean; override;
     class function CanPasteFromClipboard: Boolean; override;
     class function PasteFromClipboard(img32: TImage32): Boolean; override;
@@ -88,13 +90,16 @@ end;
 // Saving (writing) Jpeg images to file ...
 //------------------------------------------------------------------------------
 
-procedure TImageFormat_JPG.SaveToStream(stream: TStream; img32: TImage32);
+procedure TImageFormat_JPG.SaveToStream(stream: TStream;
+  img32: TImage32; compressionQlty: integer);
 var
   Jpeg: TJpegImage;
 begin
   Jpeg := TJpegImage.Create;
   with TJpegImageHack(jpeg) do
   try
+    if (compressionQlty >= 0) then
+      jpeg.CompressionQuality := Min(100, compressionQlty);
     NewImage;
     NewBitmap;
     Bitmap.Width := img32.Width;

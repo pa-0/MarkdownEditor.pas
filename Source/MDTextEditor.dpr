@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021-2023 (Ethea S.r.l.)                                 }
+{       Copyright (c) 2021-2024 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MDShellExtensions                          }
@@ -32,13 +32,15 @@
 program MDTextEditor;
 
 uses
+  System.SysUtils,
   Vcl.Forms,
   Vcl.Themes,
   Vcl.Styles,
-  System.SysUtils,
   dlgSearchText in 'dlgSearchText.pas' {TextSearchDialog},
   dlgReplaceText in 'dlgReplaceText.pas' {TextReplaceDialog},
+  dlgInputUrl in 'dlgInputUrl.pas' {InputUrlDialog},
   MDTextEditor.ViewerMainForm in 'MDTextEditor.ViewerMainForm.pas' {frmMain},
+  ChildForm in 'ChildForm.pas' {MDIChildForm},
   MDShellEx.Resources in 'MDShellEx.Resources.pas' {dmResources: TDataModule},
   DPageSetup in 'DPageSetup.pas' {PageSetupDlg},
   MDShellEx.Splash in 'MDShellEx.Splash.pas' {SplashForm},
@@ -50,11 +52,8 @@ uses
   MDShellEx.SettingsForm in 'MDShellEx.SettingsForm.pas' {SVGSettingsForm},
   MDShellEx.Registry in 'MDShellEx.Registry.pas',
   vmHtmlToPdf in 'vmHtmlToPdf.pas',
-  MarkdownCommonMark in '..\Ext\delphi-markdown\source\MarkdownCommonMark.pas',
-  MarkdownDaringFireball in '..\Ext\delphi-markdown\source\MarkdownDaringFireball.pas',
-  MarkdownHTMLEntities in '..\Ext\delphi-markdown\source\MarkdownHTMLEntities.pas',
-  MarkdownProcessor in '..\Ext\delphi-markdown\source\MarkdownProcessor.pas',
-  MarkdownUnicodeUtils in '..\Ext\delphi-markdown\source\MarkdownUnicodeUtils.pas';
+  Vcl.StyledTaskDialogFormUnit in '..\Ext\StyledComponents\source\Vcl.StyledTaskDialogFormUnit.pas' {StyledTaskDialogForm},
+  Skia.Vcl.StyledTaskDialogAnimatedUnit in '..\Ext\StyledComponents\source\Skia.Vcl.StyledTaskDialogAnimatedUnit.pas' {StyledTaskDialogAnimated};
 
 {$R *.res}
 
@@ -62,16 +61,19 @@ begin
   Application.Initialize;
   Application.MainFormOnTaskBar := True;
   Application.ActionUpdateDelay := 50;
-  Application.Title := Title_MDViewer+'- © 2021-2023 Ethea S.r.l.';
+  Application.Title := Title_MDViewer+'- © 2021-2024 Ethea S.r.l.';
+  //Uses System Style for border / shadow of Forms
+  TStyleManager.FormBorderStyle := TStyleManager.TFormBorderStyle.fbsSystemStyle;
   with TSplashForm.Create(nil) do
   Try
     Show;
     Update;
     Application.HelpFile := '';
-  Application.CreateForm(TdmResources, dmResources);
-  Application.CreateForm(TfrmMain, frmMain);
-  Application.CreateForm(TPageSetupDlg, PageSetupDlg);
-  Hide;
+    Application.CreateForm(TdmResources, dmResources);
+    Application.CreateForm(TfrmMain, frmMain);
+    Application.CreateForm(TPageSetupDlg, PageSetupDlg);
+    Application.OnException := frmMain.ManageExceptions;
+    Hide;
   Finally
     Free;
   End;

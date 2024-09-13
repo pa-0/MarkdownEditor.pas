@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021-2023 (Ethea S.r.l.)                                 }
+{       Copyright (c) 2021-2024 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -40,7 +40,8 @@ uses
   , SynEditOptionsDialog
   , System.UITypes
   , MarkdownProcessor
-  , IniFiles;
+  , IniFiles
+  , MarkdownUtils;
 
 const
   MaxfontSize = 30;
@@ -87,12 +88,18 @@ type
     FHTMLFontName: string;
     FRescalingImage: Boolean;
     FProcessorDialect: TMarkdownProcessorDialect;
+    FButtonDrawRounded: Boolean;
+    FToolbarDrawRounded: Boolean;
+    FMenuDrawRounded: Boolean;
     function GetUseDarkStyle: Boolean;
     function GetThemeSectionName: string;
     function GetButtonTextColor: TColor;
     class function GetSettingsFileName: string; static;
     procedure SetRescalingImage(const Value: Boolean);
     procedure SetProcessorDialect(const Value: TMarkdownProcessorDialect);
+    procedure SetButtonDrawRounded(const Value: Boolean);
+    procedure SetToolbarDrawRounded(const Value: Boolean);
+    procedure SetMenuDrawRounded(const Value: Boolean);
   protected
     FIniFile: TIniFile;
   public
@@ -129,6 +136,9 @@ type
     property ActivePageIndex: Integer read FActivePageIndex write FActivePageIndex;
     property ThemeSelection: TThemeSelection read FThemeSelection write FThemeSelection;
     property ProcessorDialect: TMarkdownProcessorDialect read FProcessorDialect write SetProcessorDialect;
+    property ButtonDrawRounded: Boolean read FButtonDrawRounded write SetButtonDrawRounded;
+    property ToolbarDrawRounded: Boolean read FToolbarDrawRounded write SetToolbarDrawRounded;
+    property MenuDrawRounded: Boolean read FMenuDrawRounded write SetMenuDrawRounded;
   end;
 
   TPreviewSettings = class(TSettings)
@@ -230,36 +240,23 @@ begin
 {$IFNDEF DISABLE_STYLES}
   if StyleServices.Enabled then
   begin
-    //High-DPI Themes (Delphi 11.0)
-    RegisterThemeAttributes('Windows'               ,ttLight );
-    RegisterThemeAttributes('Aqua Light Slate'      ,ttLight );
-    RegisterThemeAttributes('Copper'                ,ttLight );
-    RegisterThemeAttributes('CopperDark'            ,ttDark  );
-    RegisterThemeAttributes('Coral'                 ,ttLight );
-    RegisterThemeAttributes('Diamond'               ,ttLight );
-    RegisterThemeAttributes('Emerald'               ,ttLight );
-    RegisterThemeAttributes('Flat UI Light'         ,ttLight );
-    RegisterThemeAttributes('Glow'                  ,ttDark  );
-    RegisterThemeAttributes('Iceberg Classico'      ,ttLight );
-    RegisterThemeAttributes('Lavender Classico'     ,ttLight );
-    RegisterThemeAttributes('Sky'                   ,ttLight );
-    RegisterThemeAttributes('Slate Classico'        ,ttLight );
-    RegisterThemeAttributes('Sterling'              ,ttLight );
-    RegisterThemeAttributes('Tablet Dark'           ,ttDark  );
-    RegisterThemeAttributes('Tablet Light'          ,ttLight );
-    RegisterThemeAttributes('Windows10'             ,ttLight );
-    RegisterThemeAttributes('Windows10 Blue'        ,ttDark  );
-    RegisterThemeAttributes('Windows10 Dark'        ,ttDark  );
-    RegisterThemeAttributes('Windows10 Green'       ,ttDark  );
-    RegisterThemeAttributes('Windows10 Purple'      ,ttDark  );
-    RegisterThemeAttributes('Windows10 SlateGray'   ,ttDark  );
-    RegisterThemeAttributes('Glossy'                ,ttDark  );
-    RegisterThemeAttributes('Windows10 BlackPearl'  ,ttDark  );
-    RegisterThemeAttributes('Windows10 Blue Whale'  ,ttDark  );
-    RegisterThemeAttributes('Windows10 Clear Day'   ,ttLight );
-    RegisterThemeAttributes('Windows10 Malibu'      ,ttLight );
-    RegisterThemeAttributes('Windows11 Modern Dark' ,ttDark  );
-    RegisterThemeAttributes('Windows11 Modern Light',ttLight );
+    //High-DPI Themes
+    RegisterThemeAttributes('Sky'                       ,ttLight );
+    RegisterThemeAttributes('Windows10'                 ,ttLight );
+    RegisterThemeAttributes('Windows11 Impressive Light',ttLight );
+    RegisterThemeAttributes('Windows11 Modern Light'    ,ttLight );
+    RegisterThemeAttributes('Windows11 Polar Light'     ,ttLight );
+    RegisterThemeAttributes('Flat UI Light'             ,ttLight );
+    RegisterThemeAttributes('Windows10 Clear Day'       ,ttLight );
+    RegisterThemeAttributes('Windows10 Malibu'          ,ttLight );
+    RegisterThemeAttributes('Glow'                      ,ttDark  );
+    RegisterThemeAttributes('Windows10 Dark'            ,ttDark  );
+    RegisterThemeAttributes('Windows10 SlateGray'       ,ttDark  );
+    RegisterThemeAttributes('Windows11 Impressive Dark' ,ttDark  );
+    RegisterThemeAttributes('Windows11 Modern Dark'     ,ttDark  );
+    RegisterThemeAttributes('Windows11 Polar Dark'      ,ttDark  );
+    RegisterThemeAttributes('Windows10 BlackPearl'      ,ttDark  );
+    RegisterThemeAttributes('Windows10 Blue Whale'      ,ttDark  );
   end;
 {$ELSE}
     RegisterThemeAttributes('Windows'            ,ttLight );
@@ -343,7 +340,10 @@ begin
   FStyleName := FIniFile.ReadString('Global', 'StyleName', DefaultStyleName);
   FThemeSelection := TThemeSelection(FIniFile.ReadInteger('Global', 'ThemeSelection', 0));
   FProcessorDialect := TMarkdownProcessorDialect(FIniFile.ReadInteger('Global', 'ProcessorDialect', 1));
-  //Select Style by default on Actual Windows Theme
+  FToolbarDrawRounded := FIniFile.ReadBool('Global', 'ToolbarDrawRounded', false);
+  FButtonDrawRounded := FIniFile.ReadBool('Global', 'ButtonDrawRounded', false);
+  FMenuDrawRounded := FIniFile.ReadBool('Global', 'MenuDrawRounded', false);
+//Select Style by default on Actual Windows Theme
   if FThemeSelection = tsAsWindows then
   begin
     FUseDarkStyle := not IsWindowsAppThemeLight;
@@ -420,6 +420,9 @@ begin
 
   FIniFile.WriteInteger('Global', 'ThemeSelection', Ord(FThemeSelection));
   FIniFile.WriteInteger('Global', 'ProcessorDialect', Ord(FProcessorDialect));
+  FIniFile.WriteBool('Global', 'ToolbarDrawRounded', ToolbarDrawRounded);
+  FIniFile.WriteBool('Global', 'ButtonDrawRounded', ButtonDrawRounded);
+  FIniFile.WriteBool('Global', 'MenuDrawRounded', MenuDrawRounded);
 
   if (FUseDarkStyle and (LightBackground <> default_darkbackground)) or
     (not FUseDarkStyle and (LightBackground <> default_lightbackground)) then
@@ -444,6 +447,22 @@ begin
   FIniFile.WriteFloat('PDFPageSettins', 'MarginBottom', PDFPageSettings.MarginBottom);
   FIniFile.WriteFloat('PDFPageSettins', 'MarginLeft', PDFPageSettings.MarginLeft);
   FIniFile.WriteFloat('PDFPageSettins', 'MarginRight', PDFPageSettings.MarginRight);
+end;
+
+procedure TSettings.SetToolbarDrawRounded(
+  const Value: Boolean);
+begin
+  FToolbarDrawRounded := Value;
+end;
+
+procedure TSettings.SetMenuDrawRounded(const Value: Boolean);
+begin
+  FMenuDrawRounded := Value;
+end;
+
+procedure TSettings.SetButtonDrawRounded(const Value: Boolean);
+begin
+  FButtonDrawRounded := Value;
 end;
 
 { TPreviewSettings }
@@ -650,7 +669,6 @@ procedure TEditorSettings.WriteSynEditorOptions(
   begin
     FIniFile.WriteBool(EDITOPTION_OPTIONS, AName, AValue in ASynEditorOptions.Options);
   end;
-
 begin
   if not Assigned(ASynEditorOptions) then
     Exit;

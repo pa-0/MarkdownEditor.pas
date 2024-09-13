@@ -3,7 +3,7 @@
 {       SVGIconImageList: An extended ImageList for Delphi/VCL                 }
 {       to simplify use of SVG Icons (resize, opacity and more...)             }
 {                                                                              }
-{       Copyright (c) 2019-2023 (Ethea S.r.l.)                                 }
+{       Copyright (c) 2019-2024 (Ethea S.r.l.)                                 }
 {       Author: Vincent Parrett                                                }
 {       Contributors: Carlo Barazzetta, Kiriakos Vlahos                        }
 {                                                                              }
@@ -96,6 +96,11 @@ type
     function GetNameByIndex(AIndex: Integer): String; override;
     function GetBitmap(AIndex: Integer; AWidth, AHeight: Integer): TBitmap; override;
     procedure Draw(ACanvas: TCanvas; ARect: TRect; AIndex: Integer; AProportional: Boolean = False); override;
+    procedure UpdateAttributes(AFixedColor: TColor;
+      AApplyFixedColorToRootOnly: Boolean;
+      AGrayScale: Boolean;
+      AAntiAliasColor: TColor;
+      AOpacity: Byte);
     {$ELSE}
     procedure Change;
     procedure Draw(ACanvas: TCanvas; ARect: TRect; AIndex: Integer; AProportional: Boolean = False);
@@ -104,10 +109,12 @@ type
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure Assign(Source: TPersistent); override;
-
     function LoadFromFiles(const AFileNames: TStrings;
       const AAppend: Boolean = True): Integer;
-
+    function LoadFromFile(const AFileName: string;
+      out AImageName: string): TSVGIconItem;
+    function SaveToFile(const AFileName: string;
+      const AImageName: string): Boolean;
     function Add(const ASVG: ISVG; const AIconName: string;
        const AGrayScale: Boolean = False;
        const AFixedColor: TColor = SVG_INHERIT_COLOR;
@@ -134,6 +141,7 @@ implementation
 
 uses
   System.SysUtils
+  , VCL.Controls
   , {$IFDEF DXE4+}System.Messaging{$ELSE}SVGMessaging{$ENDIF};
 
 { TSVGIconImageCollection }
@@ -262,6 +270,17 @@ begin
   Result := -1;
 end;
 
+function TSVGIconImageCollection.LoadFromFile(const AFileName: string;
+  out AImageName: string): TSVGIconItem;
+begin
+  SVGIconItems.BeginUpdate;
+  try
+    Result := SVGIconItems.LoadFromFile(AFileName, AImageName);
+  finally
+    SVGIconItems.EndUpdate;
+  end;
+end;
+
 function TSVGIconImageCollection.LoadFromFiles(const AFileNames: TStrings;
   const AAppend: Boolean): Integer;
 begin
@@ -276,13 +295,13 @@ end;
 function TSVGIconImageCollection.LoadFromResource(const hInstance: THandle; const ResourceName, IconName: string) : integer;
 var
   ResStream: TResourceStream;
-  Svg : ISVG;
+  LSvg: ISVG;
 begin
   resStream := TResourceStream.Create(hInstance, ResourceName, RT_RCDATA);
   try
-    Svg := GlobalSVGFactory.NewSvg;
-    Svg.LoadFromStream(ResStream);
-    result := Add(Svg, IconName);
+    LSvg := GlobalSVGFactory.NewSvg;
+    LSvg.LoadFromStream(ResStream);
+    result := Add(LSvg, IconName);
   finally
     ResStream.Free;
   end;
@@ -290,11 +309,11 @@ end;
 
 function TSVGIconImageCollection.LoadFromString(const Source,  IconName: string): integer;
 var
-  Svg : ISVG;
+  LSvg: ISVG;
 begin
-  Svg := GlobalSVGFactory.NewSvg;
-  Svg.Source := Source;
-  result := Add(Svg, IconName);
+  LSvg := GlobalSVGFactory.NewSvg;
+  LSvg.Source := Source;
+  result := Add(LSvg, IconName);
 end;
 
 procedure TSVGIconImageCollection.ReadLeft(Reader: TReader);
@@ -318,6 +337,23 @@ end;
 procedure TSVGIconImageCollection.Remove(const Name: string);
 begin
   Delete(IndexOf(Name));
+end;
+
+function TSVGIconImageCollection.SaveToFile(const AFileName,
+  AImageName: string): Boolean;
+var
+  LOutDir: string;
+  LItem: TSVGIconItem;
+begin
+  Result := False;
+  LItem := SVGIconItems.GetIconByName(AImageName);
+  if Assigned(LItem) then
+  begin
+    LOutDir := ExtractFilePath(AFileName);
+    System.SysUtils.ForceDirectories(LOutDir);
+    LItem.SVG.SaveToFile(AFileName);
+    Result := True;
+  end;
 end;
 
 procedure TSVGIconImageCollection.SetAntiAliasColor(const Value: TColor);
@@ -464,6 +500,29 @@ begin
     Result := nil;
 end;
 
+procedure TSVGIconImageCollection.UpdateAttributes(
+  AFixedColor: TColor;
+  AApplyFixedColorToRootOnly: Boolean;
+  AGrayScale: Boolean;
+  AAntiAliasColor: TColor;
+  AOpacity: Byte);
+begin
+  if (AFixedColor <> FFixedColor) or
+    (AApplyFixedColorToRootOnly <> FApplyFixedColorToRootOnly) or
+    (AGrayScale <> FGrayScale) or
+    (AAntiAliasColor <> FAntiAliasColor) or
+    (AOpacity <> FOpacity) then
+  FSVGItems.BeginUpdate;
+  try
+    FFixedColor := AFixedColor;
+    FApplyFixedColorToRootOnly := AApplyFixedColorToRootOnly;
+    FGrayScale := AGrayScale;
+    FAntiAliasColor := AAntiAliasColor;
+    FOpacity := AOpacity;
+  finally
+    FSVGItems.EndUpdate;
+  end;
+end;
 {$ELSE}
 procedure TSVGIconImageCollection.Change;
 begin
@@ -498,5 +557,14 @@ begin
 
   LSVG.PaintTo(ACanvas.Handle, TRectF.Create(ARect), AProportional);
 end;
+
+initialization
+
+{$IF NOT DEFINED(CLR)}
+  StartClassGroup(VCL.Controls.TControl);
+  ActivateClassGroup(VCL.Controls.TControl);
+  GroupDescendentsWith(TSVGIconImageCollection, VCL.Controls.TControl);
+{$ENDIF}
+
 
 end.

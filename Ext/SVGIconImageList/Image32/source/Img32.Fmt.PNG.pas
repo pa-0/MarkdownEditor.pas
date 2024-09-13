@@ -3,7 +3,7 @@ unit Img32.Fmt.PNG;
 (*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  4.4                                                             *
-* Date      :  30 January 2023                                               *
+* Date      :  9 May 2023                                                      *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2019-2023                                         *
 * Purpose   :  PNG file format extension for TImage32                          *
@@ -14,10 +14,10 @@ interface
 
 {$I Img32.inc}
 
-{$IFDEF DELPHI_PNG}
+{$IF DEFINED(USING_VCL) AND DEFINED(DELPHI_PNG)}
 uses
-  SysUtils, Classes, Windows,
-  {$IFDEF FPC} Graphics {$ELSE} Math, PngImage {$ENDIF}, Img32;
+  SysUtils, Classes,
+  {$IFDEF FPC} Graphics {$ELSE} Windows, Math, PngImage {$ENDIF}, Img32;
 
 type
   TImageFormat_PNG = class(TImageFormat)
@@ -25,7 +25,9 @@ type
     class function IsValidImageStream(stream: TStream): Boolean; override;
     function LoadFromStream(stream: TStream;
       img32: TImage32; imgIndex: integer = 0): Boolean; override;
-    procedure SaveToStream(stream: TStream; img32: TImage32); override;
+    // SaveToStream: the compressionQuality parameter is ignored here
+    procedure SaveToStream(stream: TStream;
+      img32: TImage32; compressionQuality: integer = 0); override;
     class function CanCopyToClipboard: Boolean; override;
     class function CopyToClipboard(img32: TImage32): Boolean; override;
     class function CanPasteFromClipboard: Boolean; override;
@@ -35,11 +37,11 @@ type
 var
   CF_PNG: Cardinal = 0;     //Windows Clipboard
   CF_IMAGEPNG: Cardinal = 0;
-{$ENDIF} //DELPHI_PNG - undefined in old versions
+{$IFEND} //DELPHI_PNG - undefined in old versions
 
 implementation
 
-{$IFDEF DELPHI_PNG}
+{$IF DEFINED(USING_VCL) AND DEFINED(DELPHI_PNG)}
 resourcestring
   s_cf_png_error      = 'TImage32 - PNG clipboard format error';
   s_cf_imagepng_error = 'TImage32 - image/png clipboard format error';
@@ -84,7 +86,8 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TImageFormat_PNG.SaveToStream(stream: TStream; img32: TImage32);
+procedure TImageFormat_PNG.SaveToStream(stream: TStream;
+  img32: TImage32; compressionQuality: integer = 0);
 var
   png: TPortableNetworkGraphic;
 begin
@@ -104,17 +107,95 @@ end;
 //------------------------------------------------------------------------------
 {$ELSE}
 
+procedure CopyLineWithAlpha(dst: PARGB; srcAlpha, srcColor: PByte; Width: Integer);
+type
+  PARGBStaticArray = ^TARGBStaticArray;
+  TARGBStaticArray = array[0..3] of TARGB;
+var
+  j: Integer;
+begin
+  j := Width;
+
+  // Copy 4 Pixels at a time.
+  // Instead of ">= 4" we need ">= 5" here. Otherwise the code would
+  // read a byte from the last srcColor (3 bytes per pixel) that doesn't exist
+  while j >= 5 do
+  begin
+    // Read and mask the 4 bytes from srcColor because it has only 3 bytes per pixel
+    // and replace the alpha channel
+    PARGBStaticArray(dst)[0].Color := (PColor32(@srcColor[0])^ and $00FFFFFF) or (srcAlpha[0] shl 24);
+    PARGBStaticArray(dst)[1].Color := (PColor32(@srcColor[3])^ and $00FFFFFF) or (srcAlpha[1] shl 24);
+    PARGBStaticArray(dst)[2].Color := (PColor32(@srcColor[6])^ and $00FFFFFF) or (srcAlpha[2] shl 24);
+    PARGBStaticArray(dst)[3].Color := (PColor32(@srcColor[9])^ and $00FFFFFF) or (srcAlpha[3] shl 24);
+
+    inc(srcColor, 3 * 4);
+    inc(srcAlpha, 4);
+    inc(dst, 4);
+    dec(j, 4);
+  end;
+
+  // Copy the remaining pixels by accessing only the 3 bytes per pixel.
+  while j > 0 do
+  begin
+    dst.Color := {A:} (srcAlpha^ shl 24) or
+                 {B:} (srcColor[0]) or
+                 {G:} (srcColor[1] shl 8) or
+                 {R:} (srcColor[2] shl 16);
+    inc(srcColor, 3);
+    inc(srcAlpha);
+    inc(dst);
+    dec(j);
+  end;
+end;
+
+procedure CopyLineWithoutAlpha(dst: PARGB; srcColor: PByte; Width: Integer);
+type
+  PARGBStaticArray = ^TARGBStaticArray;
+  TARGBStaticArray = array[0..3] of TARGB;
+var
+  j: Integer;
+begin
+  j := Width;
+
+  // Copy 4 Pixels at a time
+  // Instead of ">= 4" we need ">= 5" here. Otherwise the code would
+  // read a byte from the last srcColor (3 bytes per pixel) that doesn't exist
+  while j >= 5 do
+  begin
+    // Replace the alpha channel with 255
+    PARGBStaticArray(dst)[0].Color := PColor32(@srcColor[0])^ or $FF000000;
+    PARGBStaticArray(dst)[1].Color := PColor32(@srcColor[3])^ or $FF000000;
+    PARGBStaticArray(dst)[2].Color := PColor32(@srcColor[6])^ or $FF000000;
+    PARGBStaticArray(dst)[3].Color := PColor32(@srcColor[9])^ or $FF000000;
+
+    inc(srcColor, 3 * 4);
+    inc(dst, 4);
+    dec(j, 4);
+  end;
+
+  // Copy the remaining pixels by accessing only the 3 bytes per pixel.
+  while j > 0 do
+  begin
+    dst.Color := {A:} $FF000000 or
+                 {B:} (srcColor[0]) or
+                 {G:} (srcColor[1] shl 8) or
+                 {R:} (srcColor[2] shl 16);
+    inc(srcColor, 3);
+    inc(dst);
+    dec(j);
+  end;
+end;
+
 function TImageFormat_PNG.LoadFromStream(stream: TStream;
   img32: TImage32; imgIndex: integer): Boolean;
 var
-  i,j       : integer;
-  png       : TPngImage;
-  dst       : PARGB;
-  srcAlpha  : PByte;
-  srcColor  : PByte;
-  bytesPerRow: integer;
-  palentries : array[0..255] of TPaletteEntry;
-  usingPal   : Boolean;
+  i,j         : integer;
+  png         : TPngImage;
+  dst         : PARGB;
+  srcColor    : PByte;
+  palentries  : array[0..255] of TPaletteEntry;
+  usingPal    : Boolean;
+  transpColor : TColor32;
 begin
   img32.BeginUpdate;
   png := TPngImage.Create;
@@ -122,9 +203,9 @@ begin
     png.LoadFromStream(stream);
     img32.SetSize(png.Width, png.Height);
 
-    bytesPerRow := PByte(png.Scanline[1]) -
-      PByte(png.Scanline[0]);
-    usingPal := (Abs(bytesPerRow) = png.Width) and (png.Palette <> 0);
+    //bytesPerRow := PByte(png.Scanline[1]) - PByte(png.Scanline[0]);
+    //usingPal := (Abs(bytesPerRow) = png.Width) and (png.Palette <> 0);
+    usingPal := (png.Header.BitDepth <= 8) and (png.Palette <> 0);
 
     if usingPal then
     begin
@@ -139,35 +220,24 @@ begin
 
       if usingPal then
       begin
+        transpColor := TColor32(png.transparentColor) or $FF000000;
         for j := 0 to img32.Width -1 do
         begin
           dst.Color := TColor32(palentries[srcColor^]);
+          if dst.Color = transpColor then
+            dst.Color := clNone32;
           inc(srcColor);
           inc(dst);
         end;
       end
-      else if png.Transparent then
+      else if png.Transparent and
+        (png.Header.ColorType = COLOR_RGBALPHA) or
+          (png.Header.ColorType = COLOR_GRAYSCALEALPHA) then
       begin
-        srcAlpha := PByte(png.AlphaScanline[i]);
-        for j := 0 to img32.Width -1 do
-        begin
-          dst.A := srcAlpha^; inc(srcAlpha);
-
-          dst.B := srcColor^; inc(srcColor);
-          dst.G := srcColor^; inc(srcColor);
-          dst.R := srcColor^; inc(srcColor);
-          inc(dst);
-        end
+        CopyLineWithAlpha(dst, PByte(png.AlphaScanline[i]), srcColor, img32.Width);
       end else
       begin
-        for j := 0 to img32.Width -1 do
-        begin
-          dst.A := 255;
-          dst.B := srcColor^; inc(srcColor);
-          dst.G := srcColor^; inc(srcColor);
-          dst.R := srcColor^; inc(srcColor);
-          inc(dst);
-        end;
+        CopyLineWithoutAlpha(dst, srcColor, img32.Width);
       end;
 
     end;
@@ -179,7 +249,8 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TImageFormat_PNG.SaveToStream(stream: TStream; img32: TImage32);
+procedure TImageFormat_PNG.SaveToStream(stream: TStream;
+  img32: TImage32; compressionQuality: integer = 0);
 var
   i,j: integer;
   png: TPngImage;
@@ -321,6 +392,6 @@ initialization
   TImage32.RegisterImageFormatClass('PNG', TImageFormat_PNG, cpHigh);
   CF_PNG     := RegisterClipboardFormat('PNG');
   CF_IMAGEPNG := RegisterClipboardFormat('image/png');
-{$ENDIF}
+{$IFEND}
 
 end.

@@ -3,7 +3,7 @@
 {       MarkDown Shell extensions                                              }
 {       (Preview Panel, Thumbnail Icon, MD Text Editor)                        }
 {                                                                              }
-{       Copyright (c) 2021-2023 (Ethea S.r.l.)                                 }
+{       Copyright (c) 2021-2024 (Ethea S.r.l.)                                 }
 {       Author: Carlo Barazzetta                                               }
 {                                                                              }
 {       https://github.com/EtheaDev/MarkdownShellExtensions                    }
@@ -176,7 +176,19 @@ var
   procedure RegisterExtension(const AExtension: string);
   begin
     LRegKey := RootPrefix + AExtension + '\shellex\' + SID_IPreviewHandler;
-    CreateRegKey(LRegKey, '', sClassID, RootKey);
+    try
+      CreateRegKey(LRegKey, '', sClassID, RootKey);
+    except
+    end;
+  end;
+
+  procedure DeleteExtension(const AExtension: string);
+  begin
+    LRegKey := RootPrefix + AExtension + '\shellex\' + SID_IPreviewHandler;
+    try
+      DeleteRegKey(LRegKey, RootKey);
+    except
+    end;
   end;
 begin
 
@@ -195,7 +207,7 @@ begin
 
     LRegKey := Format('%sCLSID\%s',[RootPrefix, sClassID]);
     CreateRegKey(LRegKey, 'AppID', sAppID, RootKey);
-    CreateRegKey(LRegKey, 'DisplayName', 'Delphi MarkDown Preview Handler', RootKey);
+    CreateRegKey(LRegKey, 'DisplayName', 'Ethea''s MarkDown Preview Handler', RootKey);
     CreateRegKeyDWORD(LRegKey, 'DisableLowILProcessIsolation', 1, RootKey);
     CreateRegKeyREG_SZ(LRegKey, 'DllSurrogate', '%SystemRoot%\system32\prevhost.exe', RootKey);
 
@@ -219,8 +231,9 @@ begin
       DeleteRegKey(RootPrefix + ProgID + '\shellex', RootKey);
       DeleteRegValue(Format('%sCLSID\%s',[RootPrefix, sClassID]), 'DllSurrogate', RootKey);
       DeleteRegValue(Format('%sCLSID\%s',[RootPrefix, sClassID]), 'DisableLowILProcessIsolation', RootKey);
-      //Delete extension for xml
-      DeleteRegKey(RootPrefix + '.md' + '\shellex\' + SID_IPreviewHandler, RootKey);
+      //Delete extension for markdown files
+      for LExtension in AMarkDownFileExt do
+        DeleteExtension(LExtension);
     end;
     inherited UpdateRegistry(False);
   end;

@@ -2,16 +2,12 @@ unit Img32;
 
 (*******************************************************************************
 * Author    :  Angus Johnson                                                   *
-* Version   :  4.4                                                             *
-* Date      :  30 January 2023                                               *
+* Version   :  4.5                                                             *
+* Date      :  26 July 2024                                                    *
 * Website   :  http://www.angusj.com                                           *
-* Copyright :  Angus Johnson 2019-2023                                         *
-*                                                                              *
+* Copyright :  Angus Johnson 2019-2024                                         *
 * Purpose   :  The core module of the Image32 library                          *
-*                                                                              *
-* License   :  Use, modification & distribution is subject to                  *
-*              Boost Software License Ver 1                                    *
-*              http://www.boost.org/LICENSE_1_0.txt                            *
+* License   :  http://www.boost.org/LICENSE_1_0.txt                            *
 *******************************************************************************)
 
 interface
@@ -32,6 +28,10 @@ uses
   {$IFDEF UITYPES} UITypes,{$ENDIF} Math;
 
 type
+  {$IF not declared(NativeInt)}
+  NativeInt = Integer;
+  {$IFEND}
+
   TRect = Types.TRect;
   TColor32 = type Cardinal;
 
@@ -86,9 +86,7 @@ const
   {$ZEROBASEDSTRINGS OFF}
 {$ENDIF}
 
-{$IFNDEF MSWINDOWS}
-  RT_BITMAP = PChar(2);
-{$ENDIF}
+RT_BITMAP = PChar(2);
 
 type
   TClipboardPriority = (cpLow, cpMedium, cpHigh);
@@ -151,8 +149,8 @@ type
   TImageFormat = class
   public
     class function IsValidImageStream(stream: TStream): Boolean; virtual; abstract;
-    procedure SaveToStream(stream: TStream; img32: TImage32); virtual; abstract;
-    function SaveToFile(const filename: string; img32: TImage32): Boolean; virtual;
+    procedure SaveToStream(stream: TStream; img32: TImage32; quality: integer = 0); virtual; abstract;
+    function SaveToFile(const filename: string; img32: TImage32; quality: integer = 0): Boolean; virtual;
     function LoadFromStream(stream: TStream;
       img32: TImage32; imgIndex: integer = 0): Boolean; virtual; abstract;
     function LoadFromFile(const filename: string; img32: TImage32): Boolean; virtual;
@@ -164,13 +162,14 @@ type
   end;
 
   TBlendFunction = function(bgColor, fgColor: TColor32): TColor32;
+  TBlendLineFunction = procedure(bgColor, fgColor: PColor32; width: nativeint);
 
   TCompareFunction = function(master, current: TColor32; data: integer): Boolean;
   TCompareFunctionEx = function(master, current: TColor32): Byte;
 
   TTileFillStyle = (tfsRepeat, tfsMirrorHorz, tfsMirrorVert, tfsRotate180);
 
-  TResamplerFunction = function(img: TImage32; x256, y256: integer): TColor32;
+  TResamplerFunction = function(img: TImage32; x, y: double): TColor32;
 
   TImage32 = class(TObject)
   private
@@ -184,15 +183,13 @@ type
     fOnResize: TNotifyEvent;
     fUpdateCnt: integer;
     fAntiAliased: Boolean;
-    fNotifyBlocked: Boolean;
+    fNotifyBlockCnt: integer;
     function GetPixel(x,y: Integer): TColor32;
     procedure SetPixel(x,y: Integer; color: TColor32);
     function GetIsBlank: Boolean;
     function GetIsEmpty: Boolean;
     function GetPixelBase: PColor32;
     function GetPixelRow(row: Integer): PColor32;
-    procedure NearestNeighborResize(newWidth, newHeight: Integer);
-    procedure ResamplerResize(newWidth, newHeight: Integer);
     procedure RotateLeft90;
     procedure RotateRight90;
     procedure Rotate180;
@@ -201,40 +198,56 @@ type
     function GetBounds: TRect;
     function GetMidPoint: TPointD;
   protected
-    function  RectHasTransparency(rec: TRect): Boolean;
-    function  CopyPixels(rec: TRect): TArrayOfColor32;
+    procedure ResetColorCount;
+    function  RectHasTransparency(const rec: TRect): Boolean;
+    function  CopyPixels(const rec: TRect): TArrayOfColor32;
     //CopyInternal: Internal routine (has no scaling or bounds checking)
     procedure CopyInternal(src: TImage32;
       const srcRec, dstRec: TRect; blendFunc: TBlendFunction);
+    procedure CopyInternalLine(src: TImage32;
+      const srcRec, dstRec: TRect; blendLineFunc: TBlendLineFunction);
+    function CopyBlendInternal(src: TImage32; srcRec, dstRec: TRect;
+      blendFunc: TBlendFunction = nil; blendLineFunc: TBlendLineFunction = nil): Boolean; overload;
     procedure  Changed; virtual;
     procedure  Resized; virtual;
+    function   SetPixels(const newPixels: TArrayOfColor32): Boolean;
     property   UpdateCount: integer read fUpdateCnt;
   public
     constructor Create(width: Integer = 0; height: Integer = 0); overload;
+    //Create(src:array, width, height): Uses the specified array for the pixels.
+    //  Uses src for the pixels without copying it.
+    constructor Create(const src: TArrayOfColor32; width: Integer; height: Integer); overload;
     constructor Create(src: TImage32); overload;
     constructor Create(src: TImage32; const srcRec: TRect); overload;
     destructor Destroy; override;
+    //BeginUpdate/EndUpdate: postpones calls to OnChange event (can be nested)
     procedure BeginUpdate;
     procedure EndUpdate;
+    //BlockUpdate/UnBlockUpdate: blocks calls to OnChange event (can be nested)
     procedure BlockNotify;
     procedure UnblockNotify;
 
     procedure Assign(src: TImage32);
     procedure AssignTo(dst: TImage32);
+    procedure AssignSettings(src: TImage32);
+    //AssignPixelArray: Replaces the content and takes ownership of src.
+    //  Uses src for the pixels without copying it.
+    procedure AssignPixelArray(const src: TArrayOfColor32; width: Integer; height: Integer);
+
     //SetSize: Erases any current image, and fills with the specified color.
     procedure SetSize(newWidth, newHeight: Integer; color: TColor32 = 0);
-    //Resize: is similar to Scale() in that it won't eraze the existing
-    //image. Depending on the stretchImage parameter it will either stretch
-    //or crop the image. Don't confuse Resize() with SetSize(), as the latter
-    //does erase the image.
-    procedure Resize(newWidth, newHeight: Integer; stretchImage: Boolean = true);
-    //ScaleToFit: The new image will be scaled to fit within 'rec'
+    //Resize: is very similar to Scale()
+    procedure Resize(newWidth, newHeight: Integer);
+    procedure ResizeTo(targetImg: TImage32; newWidth, newHeight: Integer);
+    //ScaleToFit: The image will be scaled proportionally
     procedure ScaleToFit(width, height: integer);
     //ScaleToFitCentered: The new image will be scaled and also centred
     procedure ScaleToFitCentered(width, height: integer); overload;
     procedure ScaleToFitCentered(const rect: TRect); overload;
     procedure Scale(s: double); overload;
     procedure Scale(sx, sy: double); overload;
+    procedure ScaleTo(targetImg: TImage32; s: double); overload;
+    procedure ScaleTo(targetImg: TImage32; sx, sy: double); overload;
 
     function Copy(src: TImage32; srcRec, dstRec: TRect): Boolean;
     //CopyBlend: Copies part or all of another image (src) on top of the
@@ -243,8 +256,10 @@ type
     //function is specified, that function will determine how the images will
     //be blended. If srcRec and dstRec have different widths or heights,
     //then the image in srcRec will also be stretched to fit dstRec.
-    function CopyBlend(src: TImage32; srcRec, dstRec: TRect;
-      blendFunc: TBlendFunction = nil): Boolean;
+    function CopyBlend(src: TImage32; const srcRec, dstRec: TRect;
+      blendFunc: TBlendFunction = nil): Boolean; overload; {$IFDEF INLINE} inline; {$ENDIF}
+    function CopyBlend(src: TImage32; const srcRec, dstRec: TRect;
+      blendLineFunc: TBlendLineFunction): Boolean; overload; {$IFDEF INLINE} inline; {$ENDIF}
 
 {$IFDEF MSWINDOWS}
     //CopyFromDC: Copies an image from a Windows device context, erasing
@@ -258,10 +273,10 @@ type
     procedure CopyToDc(const srcRect, dstRect: TRect; dstDc: HDC;
       transparent: Boolean = true); overload;
 {$ENDIF}
-{$IFDEF USING_VCL_LCL}
+{$IF DEFINED(USING_VCL_LCL)}
     procedure CopyFromBitmap(bmp: TBitmap);
     procedure CopyToBitmap(bmp: TBitmap);
-{$ENDIF}
+{$IFEND}
     function CopyToClipBoard: Boolean;
     class function CanPasteFromClipBoard: Boolean;
     function PasteFromClipBoard: Boolean;
@@ -270,7 +285,7 @@ type
     procedure SetBackgroundColor(bgColor: TColor32);
     procedure Clear(color: TColor32 = 0); overload;
     procedure Clear(const rec: TRect; color: TColor32 = 0); overload;
-    procedure FillRect(rec: TRect; color: TColor32);
+    procedure FillRect(const rec: TRect; color: TColor32);
 
     procedure ConvertToBoolMask(reference: TColor32;
       tolerance: integer; colorFunc: TCompareFunction;
@@ -296,6 +311,7 @@ type
     procedure AdjustLuminance(percent: Integer);   //ie +/- 100%
     procedure AdjustSaturation(percent: Integer);  //ie +/- 100%
 
+    function GetOpaqueBounds: TRect;
     //CropTransparentPixels: Trims transparent edges until each edge contains
     //at least one opaque or semi-opaque pixel.
     function CropTransparentPixels: TRect;
@@ -314,7 +330,7 @@ type
     class function GetImageFormatClass(const ext: string): TImageFormatClass; overload;
     class function GetImageFormatClass(stream: TStream): TImageFormatClass; overload;
     class function IsRegisteredFormat(const ext: string): Boolean;
-    function SaveToFile(filename: string): Boolean;
+    function SaveToFile(filename: string; quality: integer = 0): Boolean;
     function SaveToStream(stream: TStream; const FmtExt: string): Boolean;
     function LoadFromFile(const filename: string): Boolean;
     function LoadFromStream(stream: TStream; imgIdx: integer = 0): Boolean;
@@ -419,16 +435,20 @@ type
   function BlendToOpaque(bgColor, fgColor: TColor32): TColor32;
   //BlendToAlpha: Blends two semi-transparent images (slower than BlendToOpaque)
   function BlendToAlpha(bgColor, fgColor: TColor32): TColor32;
+  procedure BlendToAlphaLine(bgColor, fgColor: PColor32; width: nativeint);
   //BlendMask: Whereever the mask is, preserves the background
   function BlendMask(bgColor, alphaMask: TColor32): TColor32;
+  procedure BlendMaskLine(bgColor, alphaMask: PColor32; width: nativeint);
   function BlendAltMask(bgColor, alphaMask: TColor32): TColor32;
   function BlendDifference(color1, color2: TColor32): TColor32;
   function BlendSubtract(bgColor, fgColor: TColor32): TColor32;
   function BlendLighten(bgColor, fgColor: TColor32): TColor32;
   function BlendDarken(bgColor, fgColor: TColor32): TColor32;
   function BlendInvertedMask(bgColor, alphaMask: TColor32): TColor32;
+  procedure BlendInvertedMaskLine(bgColor, alphaMask: PColor32; width: nativeint);
   //BlendBlueChannel: typically useful for white color masks
   function BlendBlueChannel(bgColor, blueMask: TColor32): TColor32;
+  procedure BlendBlueChannelLine(bgColor, blueMask: PColor32; width: nativeint);
 
   //COMPARE COLOR FUNCTIONS (ConvertToBoolMask, FloodFill, Vectorize etc.)
 
@@ -447,6 +467,9 @@ type
 
   function GetByteMask(img: TImage32; reference: TColor32;
     compareFunc: TCompareFunctionEx): TArrayOfByte;
+
+  function GetColorMask(img: TImage32; reference: TColor32;
+    compareFunc: TCompareFunction; tolerance: Integer): TArrayOfColor32;
 
   {$IFDEF MSWINDOWS}
   //Color32: Converts a Graphics.TColor value into a TColor32 value.
@@ -479,7 +502,9 @@ type
   function ClampByte(val: Integer): byte; overload; {$IFDEF INLINE} inline; {$ENDIF}
   function ClampByte(val: double): byte; overload; {$IFDEF INLINE} inline; {$ENDIF}
   function ClampRange(val, min, max: Integer): Integer; overload;
+    {$IFDEF INLINE} inline; {$ENDIF}
   function ClampRange(val, min, max: double): double; overload;
+    {$IFDEF INLINE} inline; {$ENDIF}
   function IncPColor32(pc: Pointer; cnt: Integer): PColor32;
 
   procedure NormalizeAngle(var angle: double; tolerance: double = Pi/360);
@@ -541,13 +566,11 @@ const
   angle360 = TwoPi;
 
 var
-  ClockwiseRotationIsAnglePositive: Boolean = true;
-
   //Resampling function identifiers (initialized in Img32.Resamplers)
   rNearestResampler : integer;
   rBilinearResampler: integer;
   rBicubicResampler : integer;
-
+  rWeightedBilinear : integer;
   DefaultResampler: Integer = 0;
 
   //Both MulTable and DivTable are used in blend functions
@@ -555,6 +578,9 @@ var
   MulTable: array [Byte,Byte] of Byte;
   //DivTable[a,b] = a * 255/b (for a &lt;= b)
   DivTable: array [Byte,Byte] of Byte;
+
+  //Sigmoid: weight byte values towards each end
+  Sigmoid: array[Byte] of Byte;
 
   dpiAware1   : integer = 1;
   DpiAwareOne : double  = 1.0;
@@ -578,21 +604,63 @@ var
 
   function MulBytes(b1, b2: Byte) : Byte;
 
+  function __Trunc(Value: Double): Integer; {$IFNDEF CPUX86} {$IFDEF INLINE} inline; {$ENDIF} {$ENDIF}
+
+  // NewColor32Array creates a new "array of TColor32". "a" is nil'ed
+  // before allocating the array. If "count" is zero or negative "a" will
+  // be nil. If "uninitialized" is True, the memory will not be zero'ed.
+  procedure NewColor32Array(var a: TArrayOfColor32; count: nativeint;
+    uninitialized: boolean = False);
+  procedure NewIntegerArray(var a: TArrayOfInteger; count: nativeint;
+    uninitialized: boolean = False);
+  procedure NewByteArray(var a: TArrayOfByte; count: nativeint;
+    uninitialized: boolean = False);
+  procedure NewPointDArray(var a: TPathD; count: nativeint;
+    uninitialized: boolean = False);
+
+  // SetLengthUninit changes the dyn. array's length but does not initialize
+  // the new elements with zeros. It can be used as a replacement for
+  // SetLength where the zero-initialitation is not required.
+  procedure SetLengthUninit(var a: TArrayOfColor32; count: nativeint); overload;
+  procedure SetLengthUninit(var a: TArrayOfInteger; count: nativeint); overload;
+  procedure SetLengthUninit(var a: TArrayOfByte; count: nativeint); overload;
+  procedure SetLengthUninit(var a: TPathD; count: nativeint); overload;
+
 implementation
 
 uses
-  Img32.Vector, Img32.Resamplers, Img32.Transform;
+  Img32.Vector, Img32.Resamplers, Img32.Transform, Img32.Fmt.BMP;
 
 resourcestring
   rsImageTooLarge = 'Image32 error: the image is too large.';
+  rsInvalidImageArrayData = 'Image32 error: the specified pixels array and the size does not match.';
+
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
+
+{$IFDEF CPUX86}
+const
+  // Use faster Trunc for x86 code in this unit.
+  Trunc: function(Value: Double): Integer = __Trunc;
+{$ENDIF CPUX86}
 
 const
   div255 : Double = 1 / 255;
 type
   TByteArray = array[0..MaxInt -1] of Byte;
   PByteArray = ^TByteArray;
+
+  {$IFDEF SUPPORTS_POINTERMATH}
+    {$POINTERMATH ON}
+  PStaticColor32Array = ^TColor32;
+  PStaticARGBArray = ^TARGB;
+    {$POINTERMATH OFF}
+  {$ELSE} // Delphi 7-2007
+  PStaticColor32Array = ^TStaticColor32Array;
+  TStaticColor32Array = array[0..MaxInt div SizeOf(TColor32) - 1] of TColor32;
+  PStaticARGBArray = ^TStaticARGBArray;
+  TStaticARGBArray = array[0..MaxInt div SizeOf(TARGB) - 1] of TARGB;
+  {$ENDIF}
 
   TImgFmtRec = record
     Fmt: string;
@@ -607,6 +675,25 @@ type
     func: TResamplerFunction;
   end;
 
+  PDynArrayRec = ^TDynArrayRec;
+  {$IFDEF FPC}
+  tdynarrayindex = sizeint;
+  TDynArrayRec = packed record
+    refcount: ptrint;
+    high: tdynarrayindex;
+    Data: record end;
+  end;
+  {$ELSE}
+  TDynArrayRec = packed record
+    {$IFDEF CPU64BITS}
+    _Padding: Integer;
+    {$ENDIF}
+    RefCnt: Integer;
+    Length: NativeInt;
+    Data: record end;
+  end;
+  {$ENDIF}
+
 var
 {$IFDEF XPLAT_GENERICS}
   ImageFormatClassList: TList<PImgFmtRec>; //list of supported file extensions
@@ -617,6 +704,170 @@ var
 {$ENDIF}
 
 //------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+
+function NewSimpleDynArray(count: nativeint; elemSize: integer; uninitialized: boolean = False): Pointer;
+var
+  p: PDynArrayRec;
+begin
+  Result := nil;
+  if (count > 0) and (elemSize > 0) then
+  begin
+    if uninitialized then
+      GetMem(Pointer(p), SizeOf(TDynArrayRec) + count * elemSize)
+    else
+      p := AllocMem(SizeOf(TDynArrayRec) + count * elemSize);
+    {$IFDEF FPC}
+    p.refcount := 1;
+    p.high := count -1;
+    {$ELSE}
+    p.RefCnt := 1;
+    p.Length := count;
+    {$ENDIF}
+    Result := @p.Data;
+  end;
+end;
+//------------------------------------------------------------------------------
+
+function InternSetSimpleDynArrayLengthUninit(a: Pointer; count: nativeint; elemSize: integer): Pointer;
+var
+  p: PDynArrayRec;
+  oldCount: integer;
+begin
+  if a = nil then
+    Result := NewSimpleDynArray(count, elemSize)
+  else if (count > 0) and (elemSize > 0) then
+  begin
+    p := PDynArrayRec(PByte(a) - SizeOf(TDynArrayRec));
+    {$IFDEF FPC}
+    oldCount := p.high + 1;
+    if p.refcount = 1 then
+    {$ELSE}
+    oldCount := p.Length;
+    if p.RefCnt = 1 then
+    {$ENDIF}
+    begin
+      // There is only one reference to this array and that is "a",
+      // so we can use ReallocMem to change the array's length.
+      if oldCount = count then
+      begin
+        Result := a;
+        Exit;
+      end;
+      ReallocMem(Pointer(p), SizeOf(TDynArrayRec) + count * elemSize);
+    end
+    else
+    begin
+      // SetLength makes a copy of the dyn array to get RefCnt=1
+      GetMem(Pointer(p), SizeOf(TDynArrayRec) + count * elemSize);
+      if oldCount < 0 then oldCount := 0; // data corruption detected
+      Move(a^, p.Data, Min(oldCount, count) * elemSize);
+      TArrayOfByte(a) := nil; // use a non-managed dyn.array type
+    end;
+
+    {$IFDEF FPC}
+    p.refcount := 1;
+    p.high := count -1;
+    {$ELSE}
+    p.RefCnt := 1;
+    p.Length := count;
+    {$ENDIF}
+    Result := @p.Data;
+  end
+  else
+  begin
+    TArrayOfByte(a) := nil; // use a non-managed dyn.array type
+    Result := nil;
+  end;
+end;
+//------------------------------------------------------------------------------
+
+function CanReuseDynArray(a: Pointer; count: nativeint): Boolean;
+// returns True if RefCnt=1 and Length=count
+begin
+  //Assert(a <> nil);
+  a := PByte(a) - SizeOf(TDynArrayRec);
+  Result :=
+    {$IFDEF FPC}
+    (PDynArrayRec(a).refcount = 1) and
+    (PDynArrayRec(a).high = count - 1);
+    {$ELSE}
+    (PDynArrayRec(a).RefCnt = 1) and
+    (PDynArrayRec(a).Length = count);
+    {$ENDIF}
+end;
+//------------------------------------------------------------------------------
+
+procedure NewColor32Array(var a: TArrayOfColor32; count: nativeint; uninitialized: boolean);
+begin
+  if a <> nil then
+  begin
+    if uninitialized and CanReuseDynArray(a, count) then
+      Exit;
+    a := nil;
+  end;
+  Pointer(a) := NewSimpleDynArray(count, SizeOf(TColor32), uninitialized);
+end;
+//------------------------------------------------------------------------------
+
+procedure NewIntegerArray(var a: TArrayOfInteger; count: nativeint; uninitialized: boolean);
+begin
+  if a <> nil then
+  begin
+    if uninitialized and CanReuseDynArray(a, count) then
+      Exit;
+    a := nil;
+  end;
+  Pointer(a) := NewSimpleDynArray(count, SizeOf(Integer), uninitialized);
+end;
+//------------------------------------------------------------------------------
+
+procedure NewByteArray(var a: TArrayOfByte; count: nativeint; uninitialized: boolean);
+begin
+  if a <> nil then
+  begin
+    if uninitialized and CanReuseDynArray(a, count) then
+      Exit;
+    a := nil;
+  end;
+  Pointer(a) := NewSimpleDynArray(count, SizeOf(Byte), uninitialized);
+end;
+//------------------------------------------------------------------------------
+
+procedure NewPointDArray(var a: TPathD; count: nativeint; uninitialized: boolean);
+begin
+  if a <> nil then
+  begin
+    if uninitialized and CanReuseDynArray(a, count) then
+      Exit;
+    a := nil;
+  end;
+  Pointer(a) := NewSimpleDynArray(count, SizeOf(TPointD), uninitialized);
+end;
+//------------------------------------------------------------------------------
+
+procedure SetLengthUninit(var a: TArrayOfColor32; count: nativeint);
+begin
+  Pointer(a) := InternSetSimpleDynArrayLengthUninit(Pointer(a), count, SizeOf(TColor32));
+end;
+//------------------------------------------------------------------------------
+
+procedure SetLengthUninit(var a: TArrayOfInteger; count: nativeint);
+begin
+  Pointer(a) := InternSetSimpleDynArrayLengthUninit(Pointer(a), count, SizeOf(Integer));
+end;
+//------------------------------------------------------------------------------
+
+procedure SetLengthUninit(var a: TArrayOfByte; count: nativeint);
+begin
+  Pointer(a) := InternSetSimpleDynArrayLengthUninit(Pointer(a), count, SizeOf(Byte));
+end;
+//------------------------------------------------------------------------------
+
+procedure SetLengthUninit(var a: TPathD; count: nativeint);
+begin
+  Pointer(a) := InternSetSimpleDynArrayLengthUninit(Pointer(a), count, SizeOf(TPointD));
+end;
 //------------------------------------------------------------------------------
 
 procedure CreateImageFormatList;
@@ -653,6 +904,45 @@ begin
   else angle := angle90;
 end;
 //------------------------------------------------------------------------------
+
+{$IFDEF CPUX86}
+{ Trunc with FPU code is very slow because the x87 ControlWord has to be changed
+  and then there is Delphi's Default8087CW variable that is not thread-safe. }
+
+//__Trunc: An efficient Trunc() algorithm (ie rounds toward zero)
+function __Trunc(Value: Double): Integer;
+var
+  exp: integer;
+  i64: UInt64 absolute Value;
+  valueBytes: array[0..7] of Byte absolute Value;
+begin
+  // https://en.wikipedia.org/wiki/Double-precision_floating-point_format
+  // 52 bit fractional value, 11bit ($7FF) exponent, and 1bit sign
+  Result := 0;
+  if i64 = 0 then Exit;
+  exp := Integer(Cardinal(i64 shr 52) and $7FF) - 1023;
+  // nb: when exp == 1024 then Value == INF or NAN.
+  if exp < 0 then
+    Exit
+  //else if exp > 52 then   // ie only for 64bit int results
+  //  Result := ((i64 and $1FFFFFFFFFFFFF) shl (exp - 52)) or (1 shl exp)
+  //else if exp > 31 then   // alternatively, range check for 32bit ints ????
+  //  raise Exception.Create(rsIntegerOverflow)
+  else
+    Result := Integer((i64 and $1FFFFFFFFFFFFF) shr (52 - exp)) or (1 shl exp);
+  // Check for the sign bit without loading Value into the FPU.
+  if valueBytes[7] and $80 <> 0 then Result := -Result;
+end;
+//------------------------------------------------------------------------------
+
+{$ELSE}
+function __Trunc(Value: Double): Integer;
+begin
+  // Uses fast SSE2 instruction
+  Result := System.Trunc(Value);
+end;
+//------------------------------------------------------------------------------
+{$ENDIF CPUX86}
 
 function SwapRedBlue(color: TColor32): TColor32;
 var
@@ -714,170 +1004,494 @@ end;
 
 function BlendToOpaque(bgColor, fgColor: TColor32): TColor32;
 var
-  res: TARGB absolute Result;
-  bg: TARGB absolute bgColor;
-  fg: TARGB absolute fgColor;
+  fgA: byte;
   fw,bw: PByteArray;
 begin
-  if fg.A = 0 then Result := bgColor
-  else if fg.A = 255 then Result := fgColor
+  fgA := fgColor shr 24;
+  if fgA = 0 then Result := bgColor
+  else if fgA = 255 then Result := fgColor
   else
   begin
     //assuming bg.A = 255, use just fg.A for color weighting
-    res.A := 255;
-    fw := PByteArray(@MulTable[fg.A]);     //ie weight of foreground
-    bw := PByteArray(@MulTable[not fg.A]); //ie weight of foreground
-    res.R := fw[fg.R] + bw[bg.R];
-    res.G := fw[fg.G] + bw[bg.G];
-    res.B := fw[fg.B] + bw[bg.B];
+    fw := PByteArray(@MulTable[fgA]);     //ie weight of foreground
+    bw := PByteArray(@MulTable[not fgA]); //ie weight of background
+
+    Result := $FF000000
+              or (TColor32(Byte(fw[Byte(fgColor shr 16)] + bw[Byte(bgColor shr 16)])) shl 16)
+              or (TColor32(Byte(fw[Byte(fgColor shr 8 )] + bw[Byte(bgColor shr  8)])) shl  8)
+              or (TColor32(Byte(fw[Byte(fgColor       )] + bw[Byte(bgColor       )]))       );
   end;
 end;
 //------------------------------------------------------------------------------
 
 function BlendToAlpha(bgColor, fgColor: TColor32): TColor32;
 var
-  res: TARGB absolute Result;
-  bg: TARGB absolute bgColor;
-  fg: TARGB absolute fgColor;
   fgWeight: byte;
   R, InvR: PByteArray;
+  bgA, fgA: byte;
 begin
   //(see https://en.wikipedia.org/wiki/Alpha_compositing)
-  if (bg.A = 0) or (fg.A = 255) then Result := fgColor
-  else if fg.A = 0 then Result := bgColor
+  fgA := fgColor shr 24;
+  bgA := bgColor shr 24;
+  if (bgA = 0) or (fgA = 255) then Result := fgColor
+  else if fgA = 0 then Result := bgColor
   else
   begin
     //combine alphas ...
-    res.A := not MulTable[not fg.A, not bg.A];
-    fgWeight := DivTable[fg.A, res.A]; //fgWeight = amount foreground color
+    Result := not MulTable[not fgA, not bgA];
+    fgWeight := DivTable[fgA, Result]; //fgWeight = amount foreground color
                                        //contibutes to total (result) color
 
     R     := PByteArray(@MulTable[fgWeight]);      //ie weight of foreground
-    InvR  := PByteArray(@MulTable[not fgWeight]);  //ie weight of foreground
-    res.R := R[fg.R] + InvR[bg.R];
-    res.G := R[fg.G] + InvR[bg.G];
-    res.B := R[fg.B] + InvR[bg.B];
+    InvR  := PByteArray(@MulTable[not fgWeight]);  //ie weight of background
+
+    Result := Result shl 24
+              or (TColor32(R[Byte(fgColor shr 16)] + InvR[Byte(bgColor shr 16)]) shl 16)
+              or (TColor32(R[Byte(fgColor shr 8 )] + InvR[Byte(bgColor shr  8)]) shl  8)
+              or (TColor32(R[Byte(fgColor)       ] + InvR[Byte(bgColor)       ])       );
   end;
 end;
 //------------------------------------------------------------------------------
 
+{$RANGECHECKS OFF} // negative array index is used
+
+{$IFNDEF CPUX64}
+function BlendToAlphaLineX86(bgColorArr, fgColorArr: PStaticColor32Array;
+  idx: nativeint): nativeint;
+// Helper function for x86 code, reduces the CPU register pressure in
+// BlendToAlphaLine().
+var
+  fgWeight: byte;
+  R, InvR: PByteArray;
+  fgA, bgA, newBgA: byte;
+  fgCol, bgCol: TColor32;
+begin
+  fgCol := fgColorArr[idx];
+  bgCol := bgColorArr[idx];
+  Result := idx;              // idx - negative offset into color arrays
+
+  while True do
+  begin
+    fgA := fgCol shr 24;
+    bgA := bgCol shr 24;
+
+    //combine alphas ...
+    newBgA := not MulTable[not fgA, not bgA];
+    fgWeight := DivTable[fgA, newBgA]; //fgWeight = amount foreground color
+                                       //contibutes to total (result) color
+
+    R     := PByteArray(@MulTable[fgWeight]);      //ie weight of foreground
+    InvR  := PByteArray(@MulTable[not fgWeight]);  //ie weight of foreground
+
+    while True do
+    begin
+      bgColorArr[Result] := TColor32(newBgA) shl 24
+            or (TColor32(R[Byte(fgCol shr 16)] + InvR[Byte(bgCol shr 16)]) shl 16)
+            or (TColor32(R[Byte(fgCol shr 8 )] + InvR[Byte(bgCol shr  8)]) shl  8)
+            or (TColor32(R[Byte(fgCol)       ] + InvR[Byte(bgCol)       ])       );
+      inc(Result);
+      if Result = 0 then exit;
+
+      fgCol := fgColorArr[Result];
+      bgCol := bgColorArr[Result];
+
+      // if both alpha channels are the same in the new pixels, we
+      // can use the already calculated R/InvR tables.
+      if (fgCol shr 24 <> fgA) or (bgCol shr 24 <> bgA) then break;
+    end;
+    // return if we have alpha channel values for which we have special code
+    if (fgCol and $FF000000 = 0) or (fgCol and $FF000000 = $FF000000) or (bgCol and $FF000000 = 0) then exit;
+  end;
+end;
+//------------------------------------------------------------------------------
+{$ENDIF ~CPUX64}
+
+procedure BlendToAlphaLine(bgColor, fgColor: PColor32; width: nativeint);
+label
+  LabelBgAlphaIsZero;
+var
+  bgColorArr, fgColorArr: PStaticColor32Array;
+  bgCol, fgCol: TColor32;
+  {$IFDEF CPUX64}
+  fgWeight, fgA, bgA: byte;
+  R, InvR: PByteArray;
+  {$ENDIF CPUX64}
+begin
+  //(see https://en.wikipedia.org/wiki/Alpha_compositing)
+
+  // Use the negative offset trick to only increment the array "width"
+  // until it reaches zero. And by offsetting the arrays by "width",
+  // the negative "width" values also becomes the index into these arrays.
+  inc(bgColor, width);
+  inc(fgColor, width);
+  width := -width;
+
+  bgColorArr := PStaticColor32Array(bgColor);
+  fgColorArr := PStaticColor32Array(fgColor);
+
+  while width < 0 do
+  begin
+    bgCol := bgColorArr[width];
+    fgCol := fgColorArr[width];
+
+    // bgColor.A is zero => change bgColor to fgColor
+    while bgCol shr 24 = 0 do
+    begin
+LabelBgAlphaIsZero:
+      bgColorArr[width] := fgCol;
+      inc(width);
+      if width = 0 then exit;
+      fgCol := fgColorArr[width];
+      bgCol := bgColorArr[width];
+    end;
+
+    // fgColor.A is zero => don't change bgColor
+    while fgCol shr 24 = 0 do
+    begin
+      // bgColorArr[w] := bgColorArr[w];
+      inc(width);
+      if width = 0 then exit;
+      fgCol := fgColorArr[width];
+      bgCol := bgColorArr[width];
+      if bgCol shr 24 = 0 then goto LabelBgAlphaIsZero;
+    end;
+
+    // fgColor.A is 255 => change bgColor to fgColor
+    while fgCol shr 24 = 255 do
+    begin
+      bgColorArr[width] := fgCol;
+      inc(width);
+      if width = 0 then exit;
+      fgCol := fgColorArr[width];
+      bgCol := bgColorArr[width];
+      if bgCol shr 24 = 0 then goto LabelBgAlphaIsZero;
+    end;
+
+    {$IFDEF CPUX64}
+    // x64 has more CPU registers than x86 and calling BlendToAlphaLineX86
+    // is slower, so we inline it.
+
+    //combine alphas ...
+    fgA := fgCol shr 24;
+    bgA := bgCol shr 24;
+    bgA := not MulTable[not fgA, not bgA];
+    fgWeight := DivTable[fgA, bgA]; //fgWeight = amount foreground color
+                                    //contibutes to total (result) color
+
+    R     := PByteArray(@MulTable[fgWeight]);      //ie weight of foreground
+    InvR  := PByteArray(@MulTable[not fgWeight]);  //ie weight of foreground
+
+    bgColorArr[width] := TColor32(bgA) shl 24
+          or (TColor32(R[Byte(fgCol shr 16)] + InvR[Byte(bgCol shr 16)]) shl 16)
+          or (TColor32(R[Byte(fgCol shr 8 )] + InvR[Byte(bgCol shr  8)]) shl  8)
+          or (TColor32(R[Byte(fgCol)       ] + InvR[Byte(bgCol)       ])       );
+    inc(width);
+    {$ELSE}
+    // x86 has not enough CPU registers and the loops above will suffer if we
+    // inline the code. So we let the compiler use a "new set" of CPU registers
+    // by calling a function.
+    width := BlendToAlphaLineX86(bgColorArr, fgColorArr, width);
+    {$ENDIF CPUX64}
+  end;
+end;
+//------------------------------------------------------------------------------
+
+{
+// reference implementation
+procedure BlendToAlphaLine(bgColor, fgColor: PColor32; width: nativeint);
+var
+  fgWeight: byte;
+  R, InvR: PByteArray;
+  bgA, fgA: Byte;
+  bgColorArr, fgColorArr: PStaticColor32Array;
+  bgCol, fgCol: TColor32;
+begin
+  //(see https://en.wikipedia.org/wiki/Alpha_compositing)
+
+  // Use the negative offset trick to only increment the array "width"
+  // until it reaches zero. And by offsetting the arrays by "width",
+  // the negative "width" values also becomes the index into these arrays.
+  inc(bgColor, width);
+  inc(fgColor, width);
+  width := -width;
+
+  bgColorArr := PStaticColor32Array(bgColor);
+  fgColorArr := PStaticColor32Array(fgColor);
+
+  while width < 0 do
+  begin
+    bgCol := bgColorArr[width];
+    fgCol := fgColorArr[width];
+    bgA := bgCol shr 24;
+    if bgA = 0 then bgColorArr[width] := fgCol
+    else
+    begin
+      fgA := fgCol shr 24;
+      if fgA > 0 then
+      begin
+        if fgA = 255 then bgColorArr[width] := fgCol
+        else if fgA > 0 then
+        begin
+          //combine alphas ...
+          bgA := not MulTable[not fgA, not bgA];
+          fgWeight := DivTable[fgA, bgA]; //fgWeight = amount foreground color
+                                          //contibutes to total (result) color
+
+          R     := PByteArray(@MulTable[fgWeight]);      //ie weight of foreground
+          InvR  := PByteArray(@MulTable[not fgWeight]);  //ie weight of foreground
+
+          bgColorArr[width] := TColor32(bgA) shl 24
+                or (TColor32(R[Byte(fgCol shr 16)] + InvR[Byte(bgCol shr 16)]) shl 16)
+                or (TColor32(R[Byte(fgCol shr 8 )] + InvR[Byte(bgCol shr  8)]) shl  8)
+                or (TColor32(R[Byte(fgCol)       ] + InvR[Byte(bgCol)       ])       );
+        end;
+      end;
+    end;
+
+    inc(width);
+  end;
+end;}
+{$IFDEF RANGECHECKS_ENABLED}
+  {$RANGECHECKS ON}
+{$ENDIF}
+//------------------------------------------------------------------------------
+
 function BlendMask(bgColor, alphaMask: TColor32): TColor32;
 var
-  res: TARGB absolute Result;
-  bg: TARGB absolute bgColor;
-  fg: TARGB absolute alphaMask;
+  a: byte;
 begin
-  Result := bgColor;
-  res.A := MulTable[bg.A, fg.A];
-  if res.A = 0 then Result := 0;
+  a := MulTable[bgColor shr 24, alphaMask shr 24];
+  if a <> 0 then Result := (TColor32(a) shl 24) or (bgColor and $00FFFFFF)
+  else Result := 0;
 end;
+//------------------------------------------------------------------------------
+
+{$RANGECHECKS OFF} // negative array index is used
+
+procedure BlendMaskLine(bgColor, alphaMask: PColor32; width: nativeint);
+var
+  a: byte;
+begin
+  // Use the negative offset trick to only increment the array "width"
+  // until it reaches zero. And by offsetting the arrays by "width",
+  // the negative "width" values also becomes the index into these arrays.
+  inc(bgColor, width);
+  inc(alphaMask, width);
+  width := -width;
+
+  // Handle special cases Alpha=0 or 255 as those are the most
+  // common values.
+  while width < 0 do
+  begin
+    a := PStaticARGBArray(bgColor)[width].A;
+    // MulTable[0, fgA] -> 0 => replace color with 0
+    while a = 0 do
+    begin
+      PStaticColor32Array(bgColor)[width] := 0;
+      inc(width);
+      if width = 0 then exit;
+      a := PStaticARGBArray(bgColor)[width].A;
+    end;
+    // MulTable[255, fgA] -> fgA => replace alpha with fgA
+    while a = 255 do
+    begin
+      PStaticARGBArray(bgColor)[width].A := PStaticARGBArray(alphaMask)[width].A;
+      inc(width);
+      if width = 0 then exit;
+      a := PStaticARGBArray(bgColor)[width].A;
+    end;
+
+    a := PStaticARGBArray(alphaMask)[width].A;
+    // MulTable[bgA, 0] -> 0 => replace color with 0
+    while a = 0 do
+    begin
+      PStaticColor32Array(bgColor)[width] := 0;
+      inc(width);
+      if width = 0 then exit;
+      a := PStaticARGBArray(alphaMask)[width].A;
+    end;
+    // MulTable[bgA, 255] -> bgA => nothing to do
+    while a = 255 do
+    begin
+      inc(width);
+      if width = 0 then exit;
+      a := PStaticARGBArray(alphaMask)[width].A;
+    end;
+
+    a := MulTable[PStaticARGBArray(bgColor)[width].A, a];
+    if a <> 0 then PStaticARGBArray(bgColor)[width].A := a
+    else PStaticColor32Array(bgColor)[width] := 0;
+
+    inc(width);
+  end;
+end;
+//------------------------------------------------------------------------------
+
+{
+// reference implementation
+procedure BlendMaskLine(bgColor, alphaMask: PColor32; width: nativeint);
+var
+  a: byte;
+begin
+  // Use the negative offset trick to only increment the array "width"
+  // until it reaches zero. And by offsetting the arrays by "width",
+  // the negative "width" values also becomes the index into these arrays.
+  inc(bgColor, width);
+  inc(alphaMask, width);
+  width := -width;
+
+  while width < 0 do
+  begin
+    a := MulTable[PStaticARGBArray(bgColor)[width].A,
+                  PStaticARGBArray(alphaMask)[width].A];
+    if a = 0 then PStaticColor32Array(bgColor)[width] := 0
+    else PStaticARGBArray(bgColor)[width].A := a;
+
+    inc(width);
+  end;
+end;}
+{$IFDEF RANGECHECKS_ENABLED}
+  {$RANGECHECKS ON}
+{$ENDIF}
 //------------------------------------------------------------------------------
 
 function BlendAltMask(bgColor, alphaMask: TColor32): TColor32;
 var
-  res: TARGB absolute Result;
-  bg: TARGB absolute bgColor;
-  fg: TARGB absolute alphaMask;
+  a: byte;
 begin
-  Result := bgColor;
-  res.A := MulTable[bg.A, 255-fg.A];
-  if res.A = 0 then Result := 0;
+  a := MulTable[bgColor shr 24, (alphaMask shr 24) xor 255];
+  if a <> 0 then Result := (TColor32(a) shl 24) or (bgColor and $00FFFFFF)
+  else Result := 0;
 end;
 //------------------------------------------------------------------------------
 
 function BlendDifference(color1, color2: TColor32): TColor32;
 var
-  res: TARGB absolute Result;
-  bg: TARGB absolute color1;
-  fg: TARGB absolute color2;
+  fgA, bgA: byte;
 begin
-  if fg.A = 0 then Result := color1
-  else if bg.A = 0 then Result := color2
+  fgA := color2 shr 24;
+  bgA := color1 shr 24;
+  if fgA = 0 then Result := color1
+  else if bgA = 0 then Result := color2
   else
   begin
-    res.A := (((fg.A xor 255) * (bg.A xor 255)) shr 8) xor 255;
-    res.R := Abs(fg.R - bg.R);
-    res.G := Abs(fg.G - bg.G);
-    res.B := Abs(fg.B - bg.B);
+    Result := TColor32(MulTable[(fgA xor 255), (bgA xor 255)] xor 255) shl 24
+              or (TColor32(Abs(Byte(color2 shr 16) - Byte(color1 shr 16))) shl 16)
+              or (TColor32(Abs(Byte(color2 shr  8) - Byte(color1 shr  8))) shl  8)
+              or (TColor32(Abs(Byte(color2       ) - Byte(color1       )))       );
   end;
 end;
 //------------------------------------------------------------------------------
 
 function BlendSubtract(bgColor, fgColor: TColor32): TColor32;
 var
-  res: TARGB absolute Result;
-  bg: TARGB absolute bgColor;
-  fg: TARGB absolute fgColor;
+  fgA, bgA: byte;
 begin
-  if fg.A = 0 then Result := bgColor
-  else if bg.A = 0 then Result := fgColor
+  fgA := fgColor shr 24;
+  bgA := bgColor shr 24;
+  if fgA = 0 then Result := bgColor
+  else if bgA = 0 then Result := fgColor
   else
   begin
-    res.A := (((fg.A xor 255) * (bg.A xor 255)) shr 8) xor 255;
-    res.R := ClampByte(fg.R - bg.R);
-    res.G := ClampByte(fg.G - bg.G);
-    res.B := ClampByte(fg.B - bg.B);
+    Result := TColor32(MulTable[(fgA xor 255), (bgA xor 255)] xor 255) shl 24
+              or (TColor32(ClampByte(Byte(fgColor shr 16) - Byte(bgColor shr 16))) shl 16)
+              or (TColor32(ClampByte(Byte(fgColor shr 8 ) - Byte(bgColor shr  8))) shl  8)
+              or (TColor32(ClampByte(Byte(fgColor       ) - Byte(bgColor       )))       );
   end;
 end;
 //------------------------------------------------------------------------------
 
 function BlendLighten(bgColor, fgColor: TColor32): TColor32;
 var
-  res: TARGB absolute Result;
-  bg: TARGB absolute bgColor;
-  fg: TARGB absolute fgColor;
+  fgA, bgA: byte;
 begin
-  if fg.A = 0 then Result := bgColor
-  else if bg.A = 0 then Result := fgColor
+  fgA := fgColor shr 24;
+  bgA := bgColor shr 24;
+  if fgA = 0 then Result := bgColor
+  else if bgA = 0 then Result := fgColor
   else
   begin
-    res.A := (((fg.A xor 255) * (bg.A xor 255)) shr 8) xor 255;
-    res.R := Max(fg.R, bg.R);
-    res.G := Max(fg.G, bg.G);
-    res.B := Max(fg.B, bg.B);
+    Result := TColor32(MulTable[(fgA xor 255), (bgA xor 255)] xor 255) shl 24
+              or (TColor32(Max(Byte(fgColor shr 16), Byte(bgColor shr 16))) shl 16)
+              or (TColor32(Max(Byte(fgColor shr 8 ), Byte(bgColor shr  8))) shl  8)
+              or (TColor32(Max(Byte(fgColor       ), Byte(bgColor       )))       );
   end;
 end;
 //------------------------------------------------------------------------------
 
 function BlendDarken(bgColor, fgColor: TColor32): TColor32;
 var
-  res: TARGB absolute Result;
-  bg: TARGB absolute bgColor;
-  fg: TARGB absolute fgColor;
+  fgA, bgA: byte;
 begin
-  if fg.A = 0 then Result := bgColor
-  else if bg.A = 0 then Result := fgColor
+  fgA := fgColor shr 24;
+  bgA := bgColor shr 24;
+  if fgA = 0 then Result := bgColor
+  else if bgA = 0 then Result := fgColor
   else
   begin
-    res.A := (((fg.A xor 255) * (bg.A xor 255)) shr 8) xor 255;
-    res.R := Min(fg.R, bg.R);
-    res.G := Min(fg.G, bg.G);
-    res.B := Min(fg.B, bg.B);
+    Result := TColor32(MulTable[(fgA xor 255), (bgA xor 255)] xor 255) shl 24
+              or (TColor32(Min(Byte(fgColor shr 16), Byte(bgColor shr 16))) shl 16)
+              or (TColor32(Min(Byte(fgColor shr 8 ), Byte(bgColor shr  8))) shl  8)
+              or (TColor32(Min(Byte(fgColor       ), Byte(bgColor       )))       );
   end;
 end;
 //------------------------------------------------------------------------------
 
 function BlendBlueChannel(bgColor, blueMask: TColor32): TColor32;
-var
-  res: TARGB absolute Result;
-  bg: TARGB absolute bgColor;
-  fg: TARGB absolute blueMask;
 begin
-  Result := bgColor;
-  res.A := MulTable[bg.A, fg.B];
+  Result := (bgColor and $00FFFFFF) or
+            (TColor32(MulTable[bgColor shr 24, blueMask shr 24]) shl 24);
+end;
+//------------------------------------------------------------------------------
+
+procedure BlendBlueChannelLine(bgColor, blueMask: PColor32; width: nativeint);
+begin
+  while width > 0 do
+  begin
+    PARGB(bgColor).A := MulTable[PARGB(bgColor).A, PARGB(blueMask).A];
+    inc(bgColor);
+    inc(blueMask);
+    dec(width);
+  end;
 end;
 //------------------------------------------------------------------------------
 
 function BlendInvertedMask(bgColor, alphaMask: TColor32): TColor32;
 var
-  res: TARGB absolute Result;
-  bg: TARGB absolute bgColor;
-  fg: TARGB absolute alphaMask;
+  a: byte;
 begin
-  Result := bgColor;
-  res.A := MulTable[bg.A, 255 - fg.A];
-  if res.A < 2 then Result := 0;
+  a := MulTable[bgColor shr 24, (alphaMask shr 24) xor 255];
+  if a < 2 then Result := 0
+  else Result := (bgColor and $00FFFFFF) or (TColor32(a) shl 24);
 end;
+//------------------------------------------------------------------------------
+
+{$RANGECHECKS OFF} // negative array index is used
+
+procedure BlendInvertedMaskLine(bgColor, alphaMask: PColor32; width: nativeint);
+var
+  a: byte;
+begin
+  // Use the negative offset trick to only increment the array "width"
+  // until it reaches zero. And by offsetting the arrays by "width",
+  // the negative "width" values also becomes the index into these arrays.
+  inc(bgColor, width);
+  inc(alphaMask, width);
+  width := -width;
+
+  while width < 0 do
+  begin
+    a := MulTable[PStaticARGBArray(bgColor)[width].A,
+                  PStaticARGBArray(alphaMask)[width].A xor 255];
+    if a < 2 then PStaticColor32Array(bgColor)[width] := 0
+    else PStaticARGBArray(bgColor)[width].A := a;
+
+    inc(width);
+  end;
+end;
+{$IFDEF RANGECHECKS_ENABLED}
+  {$RANGECHECKS ON}
+{$ENDIF}
 
 //------------------------------------------------------------------------------
 // Compare functions (see ConvertToBoolMask, FloodFill & Vectorize)
@@ -1002,14 +1616,8 @@ end;
 //------------------------------------------------------------------------------
 
 function InvertColor(color: TColor32): TColor32;
-var
-  c: TARGB absolute color;
-  r: TARGB absolute Result;
 begin
-  r.A := c.A;
-  r.R := 255 - c.R;
-  r.G := 255 - c.G;
-  r.B := 255 - c.B;
+  Result := color xor $00FFFFFF;
 end;
 //------------------------------------------------------------------------------
 
@@ -1070,7 +1678,7 @@ begin
   Result.biHeight := height;
   Result.biPlanes := 1;
   Result.biBitCount := 32;
-  Result.biSizeImage := width * height * SizeOf(TColor32);
+  Result.biSizeImage := width * Abs(height) * SizeOf(TColor32);
   Result.biCompression := BI_RGB;
 end;
 //------------------------------------------------------------------------------
@@ -1186,7 +1794,7 @@ begin
   result := nil;
   if not assigned(img) or img.IsEmpty then Exit;
   if not Assigned(compareFunc) then compareFunc := CompareRGB;
-  SetLength(Result, img.Width * img.Height);
+  NewByteArray(Result, img.Width * img.Height, True);
   pa := @Result[0];
   pc := img.PixelBase;
   for i := 0 to img.Width * img.Height -1 do
@@ -1200,6 +1808,29 @@ begin
       pa^ := #0;
   {$ENDIF}
     inc(pc); inc(pa);
+  end;
+end;
+//------------------------------------------------------------------------------
+
+function GetColorMask(img: TImage32; reference: TColor32;
+  compareFunc: TCompareFunction; tolerance: Integer): TArrayOfColor32;
+var
+  i: integer;
+  pDstPxl: PColor32;
+  pSrcPxl: PColor32;
+begin
+  result := nil;
+  if not assigned(img) or img.IsEmpty then Exit;
+  if not Assigned(compareFunc) then compareFunc := CompareRGB;
+  NewColor32Array(Result, img.Width * img.Height, True);
+  pDstPxl := @Result[0];
+  pSrcPxl := img.PixelBase;
+  for i := 0 to img.Width * img.Height -1 do
+  begin
+    if compareFunc(reference, pSrcPxl^, tolerance) then
+      pDstPxl^ := clWhite32 else
+      pDstPxl^ := clBlack32;
+    inc(pSrcPxl); inc(pDstPxl);
   end;
 end;
 //------------------------------------------------------------------------------
@@ -1223,7 +1854,7 @@ begin
   result := nil;
   if not assigned(img) or img.IsEmpty then Exit;
   if not Assigned(compareFunc) then compareFunc := GetAlphaEx;
-  SetLength(Result, img.Width * img.Height);
+  NewByteArray(Result, img.Width * img.Height, True);
   pa := @Result[0];
   pc := img.PixelBase;
   for i := 0 to img.Width * img.Height -1 do
@@ -1298,9 +1929,9 @@ var
   c, x, m, a: Integer;
 begin
   //formula from https://www.rapidtables.com/convert/color/hsl-to-rgb.html
-  c := (255 - abs(2 * hsl.lum - 255)) * hsl.sat div 255;
-  a := (hsl.hue mod 85) * 6 - 255;
-  x := c * (255 - abs(a)) div 255;
+  c := ((255 - abs(2 * hsl.lum - 255)) * hsl.sat) shr 8;
+  a := 252 - (hsl.hue mod 85) * 6;
+  x := (c * (255 - abs(a))) shr 8;
   m := hsl.lum - c div 2;
   rgba.A := hsl.alpha;
   case (hsl.hue * 6) shr 8 of
@@ -1345,7 +1976,7 @@ var
   i, len: Integer;
 begin
   len := length(hslArr);
-  setLength(result, len);
+  NewColor32Array(result, len, True);
   for i := 0 to len -1 do
     result[i] := HslToRgb(hslArr[i]);
 end;
@@ -1498,7 +2129,23 @@ begin
   fResampler := DefaultResampler;
   fwidth := Max(0, width);
   fheight := Max(0, height);
-  SetLength(fPixels, fwidth * fheight);
+  NewColor32Array(fPixels, fwidth * fheight);
+end;
+//------------------------------------------------------------------------------
+
+constructor TImage32.Create(const src: TArrayOfColor32; width: Integer; height: Integer);
+begin
+  fAntiAliased := true;
+  fResampler := DefaultResampler;
+
+  width := Max(0, width);
+  height := Max(0, height);
+  if Length(src) <> width * height then
+    raise Exception.Create(rsInvalidImageArrayData);
+
+  fWidth := width;
+  fHeight := height;
+  fPixels := src;
 end;
 //------------------------------------------------------------------------------
 
@@ -1516,9 +2163,8 @@ begin
   fResampler := src.fResampler;
   types.IntersectRect(rec, src.Bounds, srcRec);
   RectWidthHeight(rec, fWidth, fHeight);
-  SetLength(fPixels, fWidth * fHeight);
   if (fWidth = 0) or (fheight = 0) then Exit;
-  fPixels := src.CopyPixels(srcRec);
+  fPixels := src.CopyPixels(rec);
 end;
 //------------------------------------------------------------------------------
 
@@ -1626,7 +2272,6 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-
 procedure TImage32.Assign(src: TImage32);
 begin
   if assigned(src) then
@@ -1639,27 +2284,68 @@ begin
   if dst = self then Exit;
   dst.BeginUpdate;
   try
-    dst.fResampler := fResampler;
-    dst.fIsPremultiplied := fIsPremultiplied;
-    dst.fAntiAliased := fAntiAliased;
-    dst.fColorCount := 0;
+    dst.AssignSettings(Self);
     try
-      dst.SetSize(Width, Height);
-      if (Width > 0) and (Height > 0) then
-        move(fPixels[0], dst.fPixels[0], Width * Height * SizeOf(TColor32));
+      dst.fPixels := System.Copy(fPixels, 0, Length(fPixels));
+      dst.fWidth := fWidth;
+      dst.fHeight := fHeight;
+      dst.Resized;
     except
       dst.SetSize(0,0);
     end;
   finally
     dst.EndUpdate;
   end;
+  dst.fColorCount := fColorCount; // dst.EndUpdate called ResetColorCount
+end;
+//------------------------------------------------------------------------------
+
+procedure TImage32.AssignSettings(src: TImage32);
+begin
+  if assigned(src) and (src <> Self) then
+  begin
+    BeginUpdate;
+    try
+      fResampler := src.fResampler;
+      fIsPremultiplied := src.fIsPremultiplied;
+      fAntiAliased := src.fAntiAliased;
+      ResetColorCount;
+    finally
+      EndUpdate;
+    end;
+  end;
+end;
+//------------------------------------------------------------------------------
+
+procedure TImage32.AssignPixelArray(const src: TArrayOfColor32; width: Integer; height: Integer);
+var
+  wasResized: Boolean;
+begin
+  width := Max(0, width);
+  height := Max(0, height);
+  if Length(src) <> width * height then
+    raise Exception.Create(rsInvalidImageArrayData);
+
+  wasResized := (fWidth <> width) or (fHeight <> height);
+
+  BeginUpdate;
+  try
+    fWidth := width;
+    fHeight := height;
+    fPixels := src;
+  finally
+    EndUpdate;
+  end;
+
+  if wasResized then
+    Resized;
 end;
 //------------------------------------------------------------------------------
 
 procedure TImage32.Changed;
 begin
   if fUpdateCnt <> 0 then Exit;
-  fColorCount := 0;
+  ResetColorCount;
   if Assigned(fOnChange) then fOnChange(Self);
 end;
 //------------------------------------------------------------------------------
@@ -1672,16 +2358,26 @@ begin
 end;
 //------------------------------------------------------------------------------
 
+function TImage32.SetPixels(const newPixels: TArrayOfColor32): Boolean;
+var
+  len: integer;
+begin
+  len := Length(newPixels);
+  Result := (len > 0)and (len = Width * height);
+  if Result then fPixels := System.Copy(newPixels, 0, len);
+end;
+//------------------------------------------------------------------------------
+
 procedure TImage32.BeginUpdate;
 begin
-  if fNotifyBlocked then Exit;
+  if fNotifyBlockCnt > 0 then Exit;
   inc(fUpdateCnt);
 end;
 //------------------------------------------------------------------------------
 
 procedure TImage32.EndUpdate;
 begin
-  if fNotifyBlocked then Exit;
+  if fNotifyBlockCnt > 0 then Exit;
   dec(fUpdateCnt);
   if fUpdateCnt = 0 then Changed;
 end;
@@ -1689,17 +2385,15 @@ end;
 
 procedure TImage32.BlockNotify;
 begin
-  if fUpdateCnt <> 0 then Exit;
+  inc(fNotifyBlockCnt);
   inc(fUpdateCnt);
-  fNotifyBlocked := true;
 end;
 //------------------------------------------------------------------------------
 
 procedure TImage32.UnblockNotify;
 begin
-  if not fNotifyBlocked then Exit;
+  dec(fNotifyBlockCnt);
   dec(fUpdateCnt);
-  fNotifyBlocked := false;
 end;
 //------------------------------------------------------------------------------
 
@@ -1746,49 +2440,102 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TImage32.FillRect(rec: TRect; color: TColor32);
+procedure TImage32.FillRect(const rec: TRect; color: TColor32);
 var
-  i,j, rw: Integer;
+  i,j, rw, w: Integer;
   c: PColor32;
+  r: TRect;
 begin
-  Types.IntersectRect(rec, rec, bounds);
-  if IsEmptyRect(rec) then Exit;
-  rw := RectWidth(rec);
-  c := @Pixels[rec.Top * Width + rec.Left];
-  for i := rec.Top to rec.Bottom -1 do
+  Types.IntersectRect(r, rec, bounds);
+  if IsEmptyRect(r) then Exit;
+  rw := RectWidth(r);
+  w := Width;
+  c := @Pixels[r.Top * w + r.Left];
+
+  if (color = 0) and (w = rw) then
+    FillChar(c^, (r.Bottom - r.Top) * rw * SizeOf(TColor32), 0)
+  else if rw = 1 then
   begin
-    for j := 1 to rw do
+    for i := r.Top to r.Bottom -1 do
     begin
       c^ := color;
-      inc(c);
+      inc(c, w);
     end;
-    inc(c, Width - rw);
+  end
+  else if (color = 0) and (rw > 15) then
+  begin
+    for i := r.Top to r.Bottom -1 do
+    begin
+      FillChar(c^, rw * SizeOf(TColor32), 0);
+      inc(c, w);
+    end;
+  end
+  else
+  begin
+    for i := r.Top to r.Bottom -1 do
+    begin
+      for j := 1 to rw do
+      begin
+        c^ := color;
+        inc(c);
+      end;
+      inc(c, w - rw);
+    end;
   end;
   Changed;
 end;
 //------------------------------------------------------------------------------
 
-function TImage32.RectHasTransparency(rec: TRect): Boolean;
+procedure TImage32.ResetColorCount;
+begin
+  fColorCount := 0;
+end;
+//------------------------------------------------------------------------------
+
+{$RANGECHECKS OFF} // negative array index is used
+
+function TImage32.RectHasTransparency(const rec: TRect): Boolean;
 var
-  i,j, rw: Integer;
+  i, j, rw: Integer;
+  lineByteOffset: nativeint;
   c: PARGB;
+  r: TRect;
 begin
   Result := True;
-  Types.IntersectRect(rec, rec, bounds);
-  if IsEmptyRect(rec) then Exit;
-  rw := RectWidth(rec);
-  c := @Pixels[rec.Top * Width + rec.Left];
-  for i := rec.Top to rec.Bottom -1 do
+  Types.IntersectRect(r, rec, bounds);
+  if IsEmptyRect(r) then Exit;
+  rw := RectWidth(r);
+  c := @Pixels[r.Top * Width + r.Left];
+
+  if rw = Width then // we can use one loop
   begin
-    for j := 1 to rw do
+    i := (r.Bottom - r.Top) * rw;
+    inc(c, i);
+    i := -i;
+    while i < 0 do
     begin
-      if c.A < 254 then Exit;
-      inc(c);
+      if PStaticARGBArray(c)[i].A < 254 then Exit;
+      inc(i);
     end;
-    inc(c, Width - rw);
+  end
+  else
+  begin
+    lineByteOffset := (Width - rw) * SizeOf(TColor32);
+    for i := r.Top to r.Bottom -1 do
+    begin
+      for j := 1 to rw do
+      begin
+        if c.A < 254 then Exit;
+        inc(c);
+      end;
+      inc(PByte(c), lineByteOffset);
+    end;
   end;
   Result := False;
 end;
+{$IFDEF RANGECHECKS_ENABLED}
+  {$RANGECHECKS ON}
+{$ENDIF}
 //------------------------------------------------------------------------------
 
 procedure CheckBlendFill(pc: PColor32; color: TColor32);
@@ -1799,14 +2546,14 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TImage32.CopyPixels(rec: TRect): TArrayOfColor32;
+function TImage32.CopyPixels(const rec: TRect): TArrayOfColor32;
 var
   i, clipW, w,h: Integer;
   pSrc, pDst, pDst2: PColor32;
   recClipped: TRect;
 begin
   RectWidthHeight(rec, w,h);
-  setLength(result, w * h);
+  NewColor32Array(result, w * h, True);
 
   if w * h = 0 then Exit;
   Types.IntersectRect(recClipped, rec, Bounds);
@@ -1878,7 +2625,7 @@ var
 begin
   RectWidthHeight(rec, w, h);
   if (w = Width) and (h = Height) then Exit;
-  newPixels := CopyPixels(rec);
+  newPixels := CopyPixels(rec); // get pixels **before** resizing
   BlockNotify;
   try
     SetSize(w, h);
@@ -1911,111 +2658,49 @@ begin
   fwidth := Max(0, newWidth);
   fheight := Max(0, newHeight);
   fPixels := nil; //forces a blank image
-  SetLength(fPixels, fwidth * fheight);
+  NewColor32Array(fPixels, fwidth * fheight, True);
   fIsPremultiplied := false;
-  if color > 0 then
-  begin
-    BlockNotify;
-    Clear(color);
-    UnblockNotify;
-  end;
+  BlockNotify;
+  Clear(color);
+  UnblockNotify;
   Resized;
 end;
 //------------------------------------------------------------------------------
 
-procedure TImage32.Resize(newWidth, newHeight: Integer; stretchImage: Boolean);
-var
-  tmp: TImage32;
-  rec: TRect;
+procedure TImage32.Resize(newWidth, newHeight: Integer);
 begin
+  ResizeTo(Self, newWidth, newHeight);
+end;
+//------------------------------------------------------------------------------
 
+procedure TImage32.ResizeTo(targetImg: TImage32; newWidth, newHeight: Integer);
+begin
   if (newWidth <= 0) or (newHeight <= 0) then
   begin
-    SetSize(0, 0);
+    targetImg.SetSize(0, 0);
     Exit;
   end
   else if (newWidth = fwidth) and (newHeight = fheight) then
   begin
+    if targetImg <> Self then targetImg.Assign(Self);
     Exit
   end
   else if IsEmpty then
   begin
-    SetSize(newWidth, newHeight);
+    targetImg.SetSize(newWidth, newHeight);
     Exit;
   end;
 
-  BlockNotify;
+  targetImg.BlockNotify;
   try
-    if stretchImage then
-    begin
-      if fResampler = 0 then
-        NearestNeighborResize(newWidth, newHeight)
-      else
-        ResamplerResize(newWidth, newHeight);
-    end else
-    begin
-      tmp := TImage32.create(self);
-      try
-        rec := Bounds;
-        SetSize(newWidth, newHeight, clNone32);
-        Copy(tmp, rec, rec); //this will clip as required.
-      finally
-        tmp.Free;
-      end;
-    end;
+    if targetImg.fResampler <= rNearestResampler then
+      NearestNeighborResize(Self, targetImg, newWidth, newHeight)
+    else
+      ResamplerResize(Self, targetImg, newWidth, newHeight);
   finally
-    UnblockNotify;
+    targetImg.UnblockNotify;
   end;
-  Resized;
-end;
-//------------------------------------------------------------------------------
-
-procedure TImage32.NearestNeighborResize(newWidth, newHeight: Integer);
-var
-  x, y, srcY: Integer;
-  scaledXi, scaledYi: TArrayOfInteger;
-  tmp: TArrayOfColor32;
-  pc: PColor32;
-begin
-  //this NearestNeighbor code is slightly more efficient than
-  //the more general purpose one in Img32.Resamplers
-
-  if (newWidth = fWidth) and (newHeight = fHeight) then Exit;
-  SetLength(tmp, newWidth * newHeight * SizeOf(TColor32));
-
-  //get scaled X & Y values once only (storing them in lookup arrays) ...
-  SetLength(scaledXi, newWidth);
-  for x := 0 to newWidth -1 do
-    scaledXi[x] := Floor(x * fWidth / newWidth);
-  SetLength(scaledYi, newHeight);
-  for y := 0 to newHeight -1 do
-    scaledYi[y] := Floor(y * fHeight / newHeight);
-
-  pc := @tmp[0];
-  for y := 0 to newHeight - 1 do
-  begin
-    srcY := scaledYi[y];
-    if (srcY < 0) or (srcY >= fHeight) then Continue;
-    for x := 0 to newWidth - 1 do
-    begin
-      pc^ := fPixels[scaledXi[x] + srcY * fWidth];
-      inc(pc);
-    end;
-  end;
-
-  fPixels := tmp;
-  fwidth := newWidth;
-  fheight := newHeight;
-end;
-//------------------------------------------------------------------------------
-
-procedure TImage32.ResamplerResize(newWidth, newHeight: Integer);
-var
-  mat: TMatrixD;
-begin
-  mat := IdentityMatrix;
-  MatrixScale(mat, newWidth/fWidth, newHeight/fHeight);
-  AffineTransformImage(self, mat);
+  targetImg.Resized;
 end;
 //------------------------------------------------------------------------------
 
@@ -2025,11 +2710,23 @@ begin
 end;
 //------------------------------------------------------------------------------
 
+procedure TImage32.ScaleTo(targetImg: TImage32; s: double);
+begin
+  ScaleTo(targetImg, s, s);
+end;
+//------------------------------------------------------------------------------
+
 procedure TImage32.Scale(sx, sy: double);
 begin
-  //sx := Min(sx, 100); sy := Min(sy, 100);
   if (sx > 0) and (sy > 0) then
-    ReSize(Round(width * sx), Round(height * sy));
+    Resize(Round(width * sx), Round(height * sy));
+end;
+//------------------------------------------------------------------------------
+
+procedure TImage32.ScaleTo(targetImg: TImage32; sx, sy: double);
+begin
+  if (sx > 0) and (sy > 0) then
+    ResizeTo(targetImg, Round(width * sx), Round(height * sy));
 end;
 //------------------------------------------------------------------------------
 
@@ -2037,7 +2734,7 @@ procedure TImage32.ScaleToFit(width, height: integer);
 var
   sx, sy: double;
 begin
-  if IsEmpty or (width <= 0) or (height <= 0) then Exit;
+  if IsEmpty or (width < 2) or (height < 2) then Exit;
   sx := width / self.Width;
   sy := height / self.Height;
   if sx <= sy then
@@ -2070,7 +2767,7 @@ begin
       Scale(sx);
       if height = self.Height then Exit;
       rec2 := Bounds;
-      Types.OffsetRect(rec2, 0, (height - self.Height) div 2);
+      TranslateRect(rec2, 0, (height - self.Height) div 2);
       tmp := TImage32.Create(self);
       try
         SetSize(width, height);
@@ -2083,7 +2780,7 @@ begin
       Scale(sy);
       if width = self.Width then Exit;
       rec2 := Bounds;
-      Types.OffsetRect(rec2, (width - self.Width) div 2, 0);
+      TranslateRect(rec2, (width - self.Width) div 2, 0);
       tmp := TImage32.Create(self);
       try
         SetSize(width, height);
@@ -2230,14 +2927,14 @@ begin
   pc := PARGB(PixelBase);
   for i := 0 to Width * Height -1 do
   begin
-    if pc.A < 255 then Exit;
+    if pc.A < 128 then Exit;
     inc(pc);
   end;
   result := false;
 end;
 //------------------------------------------------------------------------------
 
-function TImage32.SaveToFile(filename: string): Boolean;
+function TImage32.SaveToFile(filename: string; quality: integer = 0): Boolean;
 var
   fileFormatClass: TImageFormatClass;
 begin
@@ -2250,7 +2947,7 @@ begin
   if assigned(fileFormatClass) then
     with fileFormatClass.Create do
     try
-      result := SaveToFile(filename, self);
+      result := SaveToFile(filename, self, quality);
     finally
       free;
     end;
@@ -2363,7 +3060,9 @@ end;
 procedure TImage32.CopyInternal(src: TImage32;
   const srcRec, dstRec: TRect; blendFunc: TBlendFunction);
 var
-  i, j, srcRecWidth, srcRecHeight: Integer;
+  i, j: integer;
+  srcRecWidth, srcRecHeight: nativeint;
+  srcWidth, dstWidth: nativeint;
   s, d: PColor32;
 begin
   // occasionally, due to rounding, srcRec and dstRec
@@ -2373,39 +3072,109 @@ begin
   srcRecHeight :=
     Min(srcRec.Bottom - srcRec.Top, dstRec.Bottom - dstRec.Top);
 
-  s := @src.Pixels[srcRec.Top * src.Width + srcRec.Left];
-  d := @Pixels[dstRec.top * Width + dstRec.Left];
+  srcWidth := src.Width;
+  dstWidth := Width;
+
+  s := @src.Pixels[srcRec.Top * srcWidth + srcRec.Left];
+  d := @Pixels[dstRec.top * dstWidth + dstRec.Left];
 
   if assigned(blendFunc) then
-    for i := srcRec.Top to srcRec.Top + srcRecHeight -1 do
+  begin
+    srcWidth := (srcWidth - srcRecWidth) * SizeOf(TColor32);
+    dstWidth := (dstWidth - srcRecWidth) * SizeOf(TColor32);
+    for i := 1 to srcRecHeight do
     begin
       for j := 1 to srcRecWidth do
       begin
         d^ := blendFunc(d^, s^);
         inc(s); inc(d);
       end;
-      inc(s, src.Width - srcRecWidth);
-      inc(d, Width - srcRecWidth);
-    end
-  else
-    //simply overwrite src with dst (ie without blending)
-    for i := srcRec.Top to srcRec.Top + srcRecHeight -1 do
-    begin
-      move(s^, d^, srcRecWidth * SizeOf(TColor32));
-      inc(s, src.Width);
-      inc(d, Width);
+      inc(PByte(s), srcWidth); // byte offset to the next s line
+      inc(PByte(d), dstWidth); // byte offset to the next d line
     end;
+  end
+  //simply overwrite src with dst (ie without blending)
+  else if (srcRecWidth = dstWidth) and (srcWidth = dstWidth) then
+    move(s^, d^, srcRecWidth * srcRecHeight * SizeOf(TColor32))
+  else
+  begin
+    srcWidth := srcWidth * SizeOf(TColor32);
+    dstWidth := dstWidth * SizeOf(TColor32);
+    srcRecWidth := srcRecWidth * SizeOf(TColor32);
+    for i := 1 to srcRecHeight do
+    begin
+      move(s^, d^, srcRecWidth);
+      inc(PByte(s), srcWidth); // srcWidth is in bytes 
+      inc(PByte(d), dstWidth); // dstWidth is in bytes
+    end;
+  end;
+end;
+//------------------------------------------------------------------------------
+procedure TImage32.CopyInternalLine(src: TImage32;
+  const srcRec, dstRec: TRect; blendLineFunc: TBlendLineFunction);
+var
+  i: integer;
+  srcRecWidth, srcRecHeight: nativeint;
+  srcWidth, dstWidth: nativeint;
+  s, d: PColor32;
+begin
+  if not Assigned(blendLineFunc) then
+  begin
+    CopyInternal(src, srcRec, dstRec, nil);
+    Exit;
+  end;
+
+  // occasionally, due to rounding, srcRec and dstRec
+  // don't have exactly the same widths and heights, so ...
+  srcRecWidth :=
+    Min(srcRec.Right - srcRec.Left, dstRec.Right - dstRec.Left);
+  srcRecHeight :=
+    Min(srcRec.Bottom - srcRec.Top, dstRec.Bottom - dstRec.Top);
+
+  srcWidth := src.Width;
+  dstWidth := Width;
+
+  s := @src.Pixels[srcRec.Top * srcWidth + srcRec.Left];
+  d := @Pixels[dstRec.top * dstWidth + dstRec.Left];
+
+  if (srcRecWidth = dstWidth) and (srcWidth = dstWidth) then
+    blendLineFunc(d, s, srcRecWidth * srcRecHeight)
+  else
+  begin
+    srcWidth := srcWidth * SizeOf(TColor32);
+    dstWidth := dstWidth * SizeOf(TColor32);
+    for i := 1 to srcRecHeight do
+    begin
+      blendLineFunc(d, s, srcRecWidth);
+      inc(PByte(s), srcWidth); // srcWidth is in bytes
+      inc(PByte(d), dstWidth); // dstWidth is in bytes
+    end;
+  end;
 end;
 //------------------------------------------------------------------------------
 
 function TImage32.Copy(src: TImage32; srcRec, dstRec: TRect): Boolean;
 begin
-  Result := CopyBlend(src, srcRec, dstRec, nil);
+  Result := CopyBlendInternal(src, srcRec, dstRec, nil, nil);
 end;
 //------------------------------------------------------------------------------
 
-function TImage32.CopyBlend(src: TImage32; srcRec, dstRec: TRect;
+function TImage32.CopyBlend(src: TImage32; const srcRec, dstRec: TRect;
   blendFunc: TBlendFunction): Boolean;
+begin
+  Result := CopyBlendInternal(src, srcRec, dstRec, blendFunc, nil);
+end;
+//------------------------------------------------------------------------------
+
+function TImage32.CopyBlend(src: TImage32; const srcRec, dstRec: TRect;
+  blendLineFunc: TBlendLineFunction): Boolean;
+begin
+  Result := CopyBlendInternal(src, srcRec, dstRec, nil, blendLineFunc);
+end;
+//------------------------------------------------------------------------------
+
+function TImage32.CopyBlendInternal(src: TImage32; srcRec, dstRec: TRect;
+  blendFunc: TBlendFunction; blendLineFunc: TBlendLineFunction): Boolean;
 var
   tmp: TImage32;
   srcRecClipped, dstRecClipped, r: TRect;
@@ -2437,18 +3206,20 @@ begin
     RectWidthHeight(srcRecClipped, w, h);
     RectWidthHeight(srcRec, srcW, srcH);
     ScaleRect(dstRec, w / srcW, h / srcH);
-    Types.OffsetRect(dstRec,
+    TranslateRect(dstRec,
       srcRecClipped.Left - srcRec.Left,
       srcRecClipped.Top - srcRec.Top);
   end;
 
   if (scaleX <> 1.0) or (scaleY <> 1.0) then
   begin
-    //scale source (tmp) to the destination then call CopyBlend() again ...
-    tmp := TImage32.Create(src, srcRecClipped);
+    //scale source (tmp) to the destination then call CopyBlend() again ...^
+    tmp := TImage32.Create;
     try
-      tmp.Scale(scaleX, scaleY);
-      result := CopyBlend(tmp, tmp.Bounds, dstRec, blendFunc);
+      tmp.AssignSettings(src);
+      src.ScaleTo(tmp, scaleX, scaleY);
+      ScaleRect(srcRecClipped, scaleX, scaleY);
+      result := CopyBlendInternal(tmp, srcRecClipped, dstRec, blendFunc, blendLineFunc);
     finally
       tmp.Free;
     end;
@@ -2467,7 +3238,7 @@ begin
     RectWidthHeight(dstRecClipped, w, h);
     RectWidthHeight(dstRec, dstW, dstH);
     ScaleRect(srcRecClipped, w / dstW, h / dstH);
-    Types.OffsetRect(srcRecClipped,
+    TranslateRect(srcRecClipped,
       dstRecClipped.Left - dstRec.Left,
       dstRecClipped.Top - dstRec.Top);
   end;
@@ -2478,14 +3249,17 @@ begin
   begin
     tmp := TImage32.Create(self, srcRecClipped);
     try
-      result := src.CopyBlend(tmp, tmp.Bounds, dstRecClipped, blendFunc);
+      result := src.CopyBlendInternal(tmp, tmp.Bounds, dstRecClipped, blendFunc, blendLineFunc);
     finally
       tmp.Free;
     end;
     Exit;
   end;
 
-  CopyInternal(src, srcRecClipped, dstRecClipped, blendFunc);
+  if Assigned(blendLineFunc) then
+    CopyInternalLine(src, srcRecClipped, dstRecClipped, blendLineFunc)
+  else
+    CopyInternal(src, srcRecClipped, dstRecClipped, blendFunc);
   result := true;
   Changed;
 end;
@@ -2505,8 +3279,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-{$IFDEF MSWINDOWS}
-
+{$IF DEFINED (MSWINDOWS)}
 procedure TImage32.CopyFromDC(srcDc: HDC; const srcRect: TRect);
 var
   bi: TBitmapInfoHeader;
@@ -2519,7 +3292,7 @@ begin
   try
     RectWidthHeight(srcRect, w,h);
     SetSize(w, h);
-    bi := Get32bitBitmapInfoHeader(w, h);
+    bi := Get32bitBitmapInfoHeader(w, -h); // -h => avoids need to flip image
     dc := GetDC(0);
     memDc := CreateCompatibleDC(dc);
     try
@@ -2539,7 +3312,7 @@ begin
       ReleaseDc(0, dc);
     end;
     if IsBlank then SetAlpha(255);
-    FlipVertical;
+    //FlipVertical;
   finally
     EndUpdate;
   end;
@@ -2566,15 +3339,16 @@ end;
 procedure TImage32.CopyToDc(const srcRect, dstRect: TRect;
   dstDc: HDC; transparent: Boolean = true);
 var
-  i, x,y, wSrc ,hSrc, wDest, hDest: integer;
+  i, x,y, wSrc ,hSrc, wDest, hDest, wBytes: integer;
   rec: TRect;
   bi: TBitmapInfoHeader;
   bm, oldBm: HBitmap;
   dibBits: Pointer;
-  pc: PARGB;
+  pDst, pSrc: PARGB;
   memDc: HDC;
   isTransparent: Boolean;
   bf: BLENDFUNCTION;
+  oldStretchBltMode: integer;
 begin
   Types.IntersectRect(rec, srcRect, Bounds);
   if IsEmpty or IsEmptyRect(rec) or IsEmptyRect(dstRect) then Exit;
@@ -2588,7 +3362,7 @@ begin
   bi := Get32bitBitmapInfoHeader(wSrc, hSrc);
 
   isTransparent := transparent and RectHasTransparency(srcRect);
-  memDc := CreateCompatibleDC(0);
+  memDc := CreateCompatibleDC(dstDc);
   try
     bm := CreateDIBSection(memDc, PBITMAPINFO(@bi)^,
       DIB_RGB_COLORS, dibBits, 0, 0);
@@ -2596,31 +3370,34 @@ begin
 
     try
       //copy Image to dibBits (with vertical flip)
-      pc := dibBits;
-      for i := rec.Bottom -1 downto rec.Top do
+      wBytes := wSrc * SizeOf(TColor32);
+      pDst := dibBits;
+      pSrc := PARGB(PixelRow[rec.Bottom -1]);
+      inc(pSrc, rec.Left);
+      if isTransparent and not IsPremultiplied then
       begin
-        Move(Pixels[i * Width + rec.Left], pc^, wSrc * SizeOf(TColor32));
-        inc(pc, wSrc);
+        //premultiplied alphas are required when alpha blending
+        for i := rec.Bottom -1 downto rec.Top do
+        begin
+          PremultiplyAlpha(pSrc, pDst, wSrc);
+          dec(pSrc, Width);
+          inc(pDst, wSrc);
+        end;
+      end
+      else
+      begin
+        for i := rec.Bottom -1 downto rec.Top do
+        begin
+          Move(pSrc^, pDst^, wBytes);
+          dec(pSrc, Width);
+          inc(pDst, wSrc);
+        end;
       end;
 
       oldBm := SelectObject(memDC, bm);
       if isTransparent then
       begin
-
         //premultiplied alphas are required when alpha blending
-        pc := dibBits;
-        for i := 0 to wSrc * hSrc -1 do
-        begin
-          if pc.A > 0 then
-          begin
-            pc.R  := MulTable[pc.R, pc.A];
-            pc.G  := MulTable[pc.G, pc.A];
-            pc.B  := MulTable[pc.B, pc.A];
-          end else
-            pc.Color := 0;
-          inc(pc);
-        end;
-
         bf.BlendOp := AC_SRC_OVER;
         bf.BlendFlags := 0;
         bf.SourceConstantAlpha := 255;
@@ -2628,10 +3405,15 @@ begin
         AlphaBlend(dstDc, x,y, wDest,hDest, memDC, 0,0, wSrc,hSrc, bf);
       end
       else if (wDest = wSrc) and (hDest = hSrc) then
+      begin
         BitBlt(dstDc, x,y, wSrc, hSrc, memDc, 0,0, SRCCOPY)
-      else
+      end else
+      begin
+        oldStretchBltMode := SetStretchBltMode(dstDc, COLORONCOLOR);
         StretchBlt(dstDc, x,y, wDest, hDest, memDc, 0,0, wSrc,hSrc, SRCCOPY);
-
+        if oldStretchBltMode <> COLORONCOLOR then // restore mode
+          SetStretchBltMode(dstDc, oldStretchBltMode);
+      end;
       SelectObject(memDC, oldBm);
     finally
       DeleteObject(bm);
@@ -2640,8 +3422,51 @@ begin
     DeleteDc(memDc);
   end;
 end;
+{$IFEND}
 //------------------------------------------------------------------------------
-{$ENDIF}
+
+{$IF DEFINED(USING_VCL_LCL)}
+procedure TImage32.CopyFromBitmap(bmp: TBitmap);
+var
+  ms: TMemoryStream;
+  bmpFormat: TImageFormat_BMP;
+begin
+  ms := TMemoryStream.create;
+  bmpFormat := TImageFormat_BMP.Create;
+  try
+    bmp.SaveToStream(ms);
+    ms.Position := 0;
+    bmpFormat.LoadFromStream(ms, self);
+  finally
+    ms.Free;
+    bmpFormat.Free;
+  end;
+end;
+//------------------------------------------------------------------------------
+
+procedure TImage32.CopyToBitmap(bmp: TBitmap);
+var
+  ms: TMemoryStream;
+  bmpFormat: TImageFormat_BMP;
+begin
+  ms := TMemoryStream.create;
+  bmpFormat := TImageFormat_BMP.Create;
+  try
+     bmpFormat.IncludeFileHeaderInSaveStream := true;
+     bmpFormat.SaveToStream(ms, self);
+     ms.Position := 0;
+     bmp.PixelFormat := pf32bit;
+     {$IF DEFINED(USING_VCL) AND DEFINED(ALPHAFORMAT)}
+     bmp.AlphaFormat := afDefined;
+     {$IFEND}
+     bmp.LoadFromStream(ms);
+  finally
+    ms.Free;
+    bmpFormat.Free;
+  end;
+end;
+//------------------------------------------------------------------------------
+{$IFEND}
 
 function TImage32.CopyToClipBoard: Boolean;
 var
@@ -2711,63 +3536,6 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-{$IFDEF USING_VCL_LCL}
-procedure TImage32.CopyFromBitmap(bmp: TBitmap);
-var
-  savedPF: TPixelFormat;
-{$IFNDEF MSWINDOWS}
-  i: integer;
-  pxDst, pxSrc: PColor32;
-{$ENDIF}
-begin
-  if not Assigned(bmp) then Exit;
-  savedPF := bmp.PixelFormat;
-  bmp.PixelFormat := pf32bit;
-  SetSize(bmp.Width, bmp.Height);
-{$IFDEF MSWINDOWS}
-  GetBitmapBits(bmp.Handle, Width * Height * 4, PixelBase);
-{$ELSE}
-  for i := 0 to bmp.Height -1 do
-  begin
-    pxSrc := bmp.ScanLine[i];
-    pxDst := PixelRow[i];
-    Move(pxSrc^, pxDst^, bmp.Width * SizeOf(TColor32));
-  end;
-{$ENDIF}
-  bmp.PixelFormat := savedPF;
-end;
-//------------------------------------------------------------------------------
-
-procedure TImage32.CopyToBitmap(bmp: TBitmap);
-{$IFNDEF MSWINDOWS}
-var
-  i: integer;
-  pxDst, pxSrc: PColor32;
-{$ENDIF}
-begin
-  if not Assigned(bmp) then Exit;
-  bmp.PixelFormat := pf32bit;
-  bmp.Width := Width;
-  bmp.Height := Height;
-{$IFDEF MSWINDOWS}
-  {$IFNDEF FPC}
-  {$IFDEF ALPHAFORMAT}
-  bmp.AlphaFormat := afDefined;
-  {$ENDIF}
-  {$ENDIF}
-  SetBitmapBits(bmp.Handle, Width * Height * 4, PixelBase);
-{$ELSE}
-  for i := 0 to bmp.Height -1 do
-  begin
-    pxDst := bmp.ScanLine[i];
-    pxSrc := PixelRow[i];
-    Move(pxSrc^, pxDst^, bmp.Width * SizeOf(TColor32));
-  end;
-{$ENDIF}
-end;
-//------------------------------------------------------------------------------
-{$ENDIF}
-
 procedure TImage32.ConvertToBoolMask(reference: TColor32; tolerance: integer;
   colorFunc: TCompareFunction; maskBg: TColor32; maskFg: TColor32);
 var
@@ -2825,7 +3593,7 @@ var
   src, dst: PColor32;
 begin
   if IsEmpty then Exit;
-  SetLength(a, fWidth * fHeight);
+  NewColor32Array(a, fWidth * fHeight, True);
   src := @fPixels[(height-1) * width];
   dst := @a[0];
   for i := 0 to fHeight -1 do
@@ -2845,7 +3613,7 @@ var
   row: PColor32;
 begin
   if IsEmpty then Exit;
-  SetLength(a, fWidth);
+  NewColor32Array(a, fWidth, True);
   widthLess1 := fWidth -1;
   row := @fPixels[(height-1) * width]; //top row
   for i := 0 to fHeight -1 do
@@ -2863,75 +3631,53 @@ end;
 //------------------------------------------------------------------------------
 
 procedure TImage32.PreMultiply;
-var
-  i: Integer;
-  c: PARGB;
 begin
   if IsEmpty or fIsPremultiplied then Exit;
   fIsPremultiplied := true;
-  c := PARGB(PixelBase);
-  for i := 0 to Width * Height -1 do
-  begin
-    if (c.A = 0) then c.Color := 0
-    else if (c.A < 255) then
-    begin
-      c.R  := MulTable[c.R, c.A];
-      c.G  := MulTable[c.G, c.A];
-      c.B  := MulTable[c.B, c.A];
-    end;
-    inc(c);
-  end;
+  PremultiplyAlpha(PARGB(PixelBase), PARGB(PixelBase), Width * Height);
   //nb: no OnChange notify event here
 end;
 //------------------------------------------------------------------------------
 
 procedure TImage32.SetRGB(rgbColor: TColor32);
 var
-  rgb: TARGB absolute rgbColor;
-  r,g,b: Byte;
   i: Integer;
-  pc: PARGB;
+  pc: PColor32;
+  c: TColor32;
 begin
   //this method leaves the alpha channel untouched
   if IsEmpty then Exit;
-  r := rgb.R; g := rgb.G; b := rgb.B;
-  pc := PARGB(PixelBase);
-  for i := 0 to Width * Height -1 do
-    if pc.A = 0 then
-    begin
-      pc.Color := 0;
-      inc(pc);
-    end else
-    begin
-      pc.R := r;
-      pc.G := g;
-      pc.B := b;
-      inc(pc);
-    end;
+
+  pc := PixelBase;
+  rgbColor := rgbColor and $00FFFFFF;
+  for i := 0 to Width * Height - 1 do
+  begin
+    c := pc^;
+    if c and $FF000000 = 0 then
+      pc^ := 0 else
+      pc^ := c and $FF000000 or rgbColor;
+    inc(pc);
+  end;
   Changed;
 end;
 //------------------------------------------------------------------------------
 
 procedure TImage32.SetRGB(rgbColor: TColor32; rec: TRect);
 var
-  rgb: TARGB absolute rgbColor;
-  r,g,b: Byte;
   i,j, dx: Integer;
-  pc: PARGB;
+  pc: PColor32;
 begin
   Types.IntersectRect(rec, rec, bounds);
   if IsEmptyRect(rec) then Exit;
-  r := rgb.R; g := rgb.G; b := rgb.B;
-  pc := PARGB(PixelBase);
+  rgbColor := rgbColor and $00FFFFFF;
+  pc := PixelBase;
   inc(pc, rec.Left);
   dx := Width - RectWidth(rec);
   for i := rec.Top to rec.Bottom -1 do
   begin
     for j := rec.Left to rec.Right -1 do
     begin
-      pc.R := r;
-      pc.G := g;
-      pc.B := b;
+      pc^ := pc^ and $FF000000 or rgbColor;
       inc(pc);
     end;
     inc(pc, dx);
@@ -3009,9 +3755,7 @@ begin
   pc := PARGB(PixelBase);
   for i := 0 to Width * Height -1 do
   begin
-    pc.R := 255 - pc.R;
-    pc.G := 255 - pc.G;
-    pc.B := 255 - pc.B;
+    pc.Color := pc.Color xor $00FFFFFF; // keep the alpha channel untouched
     inc(pc);
   end;
   Changed;
@@ -3036,7 +3780,7 @@ end;
 procedure TImage32.AdjustHue(percent: Integer);
 var
   i: Integer;
-  tmpImage: TArrayofHSL;
+  hsl: THsl;
   lut: array [byte] of byte;
 begin
   percent := percent mod 100;
@@ -3044,10 +3788,14 @@ begin
   percent := Round(percent * 255 / 100);
   if (percent = 0) or IsEmpty then Exit;
   for i := 0 to 255 do lut[i] := (i + percent) mod 255;
-  tmpImage := ArrayOfColor32ToArrayHSL(fPixels);
-  for i := 0 to high(tmpImage) do
-    tmpImage[i].hue := lut[ tmpImage[i].hue ];
-  fPixels := ArrayOfHSLToArrayColor32(tmpImage);
+
+  for i := 0 to high(fPixels) do
+  begin
+    hsl := RgbToHsl(fPixels[i]);
+    hsl.hue := lut[ hsl.hue ];
+    fPixels[i] := HslToRgb(hsl);
+  end;
+
   Changed;
 end;
 //------------------------------------------------------------------------------
@@ -3055,7 +3803,7 @@ end;
 procedure TImage32.AdjustLuminance(percent: Integer);
 var
   i: Integer;
-  tmpImage: TArrayofHSL;
+  hsl: THsl;
   pc: double;
   lut: array [byte] of byte;
 begin
@@ -3067,10 +3815,13 @@ begin
   else
     for i := 0 to 255 do lut[i] := Round(i + (i * pc));
 
-  tmpImage := ArrayOfColor32ToArrayHSL(fPixels);
-  for i := 0 to high(tmpImage) do
-    tmpImage[i].lum := lut[ tmpImage[i].lum ];
-  fPixels := ArrayOfHSLToArrayColor32(tmpImage);
+  for i := 0 to high(fPixels) do
+  begin
+    hsl := RgbToHsl(fPixels[i]);
+    hsl.lum := lut[ hsl.lum ];
+    fPixels[i] := HslToRgb(hsl);
+  end;
+
   Changed;
 end;
 //------------------------------------------------------------------------------
@@ -3078,7 +3829,7 @@ end;
 procedure TImage32.AdjustSaturation(percent: Integer);
 var
   i: Integer;
-  tmpImage: TArrayofHSL;
+  hsl: THsl;
   lut: array [byte] of byte;
   pc: double;
 begin
@@ -3090,21 +3841,26 @@ begin
   else
     for i := 0 to 255 do lut[i] := Round(i + (i * pc));
 
-  tmpImage := ArrayOfColor32ToArrayHSL(fPixels);
-  for i := 0 to high(tmpImage) do
-    tmpImage[i].sat := lut[ tmpImage[i].sat ];
-  fPixels := ArrayOfHSLToArrayColor32(tmpImage);
+  // Do the conversion inline without creating new pixel/hsl arrays
+  for i := 0 to high(fPixels) do
+  begin
+    hsl := RgbToHsl(fPixels[i]);
+    hsl.sat := lut[ hsl.sat ];
+    fPixels[i] := HslToRgb(hsl);
+  end;
+
   Changed;
 end;
 //------------------------------------------------------------------------------
 
-function TImage32.CropTransparentPixels: TRect;
+function TImage32.GetOpaqueBounds: TRect;
 var
   x,y, x1,x2,y1,y2: Integer;
   found: Boolean;
 begin
   y1 := 0; y2 := 0;
   found := false;
+  Result := NullRect;
   for y := 0 to Height -1 do
   begin
     for x := 0 to Width -1 do
@@ -3118,10 +3874,7 @@ begin
   end;
 
   if not found then
-  begin
-    SetSize(0, 0);
     Exit;
-  end;
 
   found := false;
   for y := Height -1 downto 0 do
@@ -3146,17 +3899,26 @@ begin
       end;
 
   Result := Types.Rect(x1, y1, x2+1, y2+1);
-  Crop(Result);
+end;
+//------------------------------------------------------------------------------
+
+function TImage32.CropTransparentPixels: TRect;
+begin
+  Result := GetOpaqueBounds;
+  if IsEmptyRect(Result) then
+     SetSize(0,0) else
+     Crop(Result);
 end;
 //------------------------------------------------------------------------------
 
 procedure TImage32.Rotate(angleRads: double);
 var
-  rec: TRectD;
   mat: TMatrixD;
 begin
-  if not ClockwiseRotationIsAnglePositive then
-    angleRads := -angleRads;
+
+{$IFDEF CLOCKWISE_ROTATION_WITH_NEGATIVE_ANGLES}
+  angleRads := -angleRads;
+{$ENDIF}
 
   //nb: There's no point rotating about a specific point
   //since the rotated image will be recentered.
@@ -3178,11 +3940,10 @@ begin
   end else
   begin
     mat := IdentityMatrix;
-    MatrixTranslate(mat, Width/2, Height/2);
-    rec := RectD(Bounds);
-    rec := GetRotatedRectBounds(rec, angleRads);
+    // the rotation point isn't important
+    // because AffineTransformImage() will
+    // will resize and recenter the image
     MatrixRotate(mat, NullPointD, angleRads);
-    MatrixTranslate(mat, rec.Width/2, rec.Height/2);
     AffineTransformImage(self, mat);
   end;
 end;
@@ -3356,7 +4117,7 @@ end;
 //------------------------------------------------------------------------------
 
 function TImageFormat.SaveToFile(const filename: string;
-  img32: TImage32): Boolean;
+  img32: TImage32; quality: integer): Boolean;
 var
   fs: TFileStream;
 begin
@@ -3366,7 +4127,7 @@ begin
 
   fs := TFileStream.Create(filename, fmCreate);
   try
-    SaveToStream(fs, img32);
+    SaveToStream(fs, img32, quality);
   finally
     fs.Free;
   end;
@@ -3446,6 +4207,7 @@ begin
   for j := 0 to 255 do DivTable[0, j] := 0;
   for i := 0 to 255 do DivTable[i, 0] := 0;
   for i := 1 to 255 do
+  begin
     for j := 1 to 255 do
     begin
       MulTable[i, j] := Round(i * j * div255);
@@ -3453,6 +4215,13 @@ begin
         DivTable[i, j] := 255 else
         DivTable[i, j] := Round(i * $FF / j);
     end;
+  end;
+
+  Sigmoid[128] := 128;
+  for i := 1 to 127 do
+    Sigmoid[128+i] := 128 + Round(127 * sin(angle90 * i/127));
+  for i := 0 to 127 do
+    Sigmoid[i] := 255- Sigmoid[255-i];
 end;
 //------------------------------------------------------------------------------
 
@@ -3469,15 +4238,6 @@ begin
   finally
     ReleaseDC(0, dc);
   end;
-  dpiAware1   := Round(DpiAwareOne);
-end;
-{$ENDIF}
-//------------------------------------------------------------------------------
-
-{$IFDEF USING_VCL_LCL}
-procedure GetScreenScale2;
-begin
-  DpiAwareOne := Screen.PixelsPerInch / 96;
   dpiAware1   := Round(DpiAwareOne);
 end;
 {$ENDIF}
@@ -3568,10 +4328,6 @@ initialization
 
 {$IFDEF MSWINDOWS}
   GetScreenScale;
-{$ELSE}
-  {$IFDEF USING_VCL_LCL}
-  GetScreenScale2;
-  {$ENDIF}
 {$ENDIF}
 
 finalization

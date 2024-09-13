@@ -35,8 +35,7 @@ Uses
   System.UIConsts,
   System.SysUtils,
   System.Classes,
-  System.RegularExpressions,
-  SVGCommon;
+  System.RegularExpressions;
 
   resourcestring
   D2D_ERROR_NOT_AVAILABLE    = 'Windows SVG support is not available';
@@ -96,6 +95,29 @@ type
 
 type
   TSvgElementProc = reference to procedure(const Element: ID2D1SvgElement);
+
+function FitIntoRectF(const ASourceArea: TRectF; const ADesignatedArea: TRectF;
+  out Ratio: Single): TRectF;
+begin
+  if (ADesignatedArea.Width <= 0) or (ADesignatedArea.Height <= 0) then
+  begin
+    Ratio := 1;
+    Exit(ASourceArea);
+  end;
+
+  if (ASourceArea.Width / ADesignatedArea.Width) > (ASourceArea.Height / ADesignatedArea.Height) then
+    Ratio := ASourceArea.Width / ADesignatedArea.Width
+  else
+    Ratio := ASourceArea.Height / ADesignatedArea.Height;
+
+  if Ratio = 0 then
+    Exit(ASourceArea)
+  else
+  begin
+    Result := TRectF.Create(0, 0, ASourceArea.Width / Ratio, ASourceArea.Height / Ratio);
+    RectCenter(Result, ADesignatedArea);
+  end;
+end;
 
 procedure TransformSvgElement(const Element: ID2D1SvgElement; Proc: TSvgElementProc);
 Var
@@ -310,7 +332,8 @@ Var
   Root: ID2D1SvgElement;
 begin
   Result := 1;
-  if Assigned(fSvgDoc) then begin
+  if Assigned(fSvgDoc) then
+  begin
     fSvgDoc.GetRoot(Root);
     if Assigned(Root) then
       Root.GetAttributeValue('opacity', D2D1_SVG_ATTRIBUTE_POD_TYPE_FLOAT,
@@ -382,9 +405,12 @@ begin
   end;
   if FOpacity <> 1.0 then
   begin
-    if Assigned(Root) then
+    if Assigned(fSvgDoc) then
+    begin
+      fSvgDoc.GetRoot(Root);
       Root.SetAttributeValue('opacity', D2D1_SVG_ATTRIBUTE_POD_TYPE_FLOAT,
         @fOpacity, SizeOf(fOpacity));
+    end;
   end;
   //FixedColor
   if (FFixedColor <> TColors.SysDefault) and Assigned(fSvgDoc) then
